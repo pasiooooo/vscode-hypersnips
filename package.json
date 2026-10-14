@@ -1,16 +1,19 @@
 {
-	"name": "yiqis-latexsnips",
-	"displayName": "Yiqi's LatexSnips",
-	"icon": "images/yiqisnips.png",
-	"version": "0.1.2",
-	"publisher": "yiqiyang33",
+	"name": "vscode-hypersnips",
+	"displayName": "vscode-hypersnips",
+	"description": "Programmable LaTeX snippets, smart alignment, and snippet management for VS Code.",
+	"icon": "images/vscode-hypersnips.png",
+	"version": "0.1.4",
+	"publisher": "pasiooooo",
+	"author": "pasiooooo",
+	"homepage": "https://github.com/pasiooooo/vscode-hypersnips#readme",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/yiqiyang33/Yiqi-s-LatexSnips"
+		"url": "https://github.com/pasiooooo/vscode-hypersnips"
 	},
 	"bugs": {
-		"url": "https://github.com/yiqiyang33/Yiqi-s-LatexSnips/issues"
+		"url": "https://github.com/pasiooooo/vscode-hypersnips/issues"
 	},
 	"engines": {
 		"vscode": "^1.85.0"
@@ -49,8 +52,14 @@
 	"contributes": {
 		"configuration": [
 			{
-				"title": "Yiqi's LatexSnips",
+				"title": "vscode-hypersnips",
 				"properties": {
+					"hsnips.autoAlign.enabled": {
+						"type": "boolean",
+						"default": true,
+						"scope": "language-overridable",
+						"description": "Automatically align LaTeX columns, operators, row breaks, and comments after edits. Disable to keep manually entered spacing."
+					},
 					"hsnips.multiLineContext": {
 						"type": "number",
 						"default": 20,
@@ -113,67 +122,67 @@
 		],
 		"commands": [
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.openSnippetsDir",
 				"title": "Open Snippets Directory"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.openSnippetFile",
 				"title": "Open Snippet File"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.openSnippetManager",
 				"title": "Open Snippet Manager"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.selectProfile",
 				"title": "Select Snippet Profile"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.openActiveProfile",
 				"title": "Open Active Snippet Profile"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.reloadSnippets",
 				"title": "Reload Snippets"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.convertEnvironment",
 				"title": "Convert LaTeX Environment"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.renameMatchingEnvironment",
 				"title": "Rename Matching LaTeX Environment"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.wrapMathStructure",
 				"title": "Wrap Math Structure"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.unwrapMathStructure",
 				"title": "Unwrap Math Structure"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.smartEnter",
 				"title": "Smart Math Enter"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.matrixTab",
 				"title": "Insert Matrix Column Separator"
 			},
 			{
-				"category": "Yiqi's LatexSnips",
+				"category": "vscode-hypersnips",
 				"command": "hsnips.smartTab",
 				"title": "Smart Alignment Tab"
 			}
@@ -212,7 +221,7 @@
 					".hsnips"
 				],
 				"aliases": [
-					"LatexSnips"
+					"vscode-hypersnips"
 				]
 			}
 		],
@@ -234,12 +243,14 @@
 		"compile": "tsc -p ./",
 		"watch": "tsc -watch -p ./",
 		"lint": "tsc --noEmit -p ./",
-		"test": "npm run compile && node ./out/test/index.js",
-		"check": "npm run lint && npm run test"
+		"test": "tsc -p tsconfig.test.json && node .test-out/test/index.js",
+		"check": "npm run lint && npm run test",
+		"package": "node -e \"require('fs').mkdirSync('dist', { recursive: true })\" && vsce package --out dist/"
 	},
 	"devDependencies": {
 		"@types/node": "18.19.130",
 		"@types/vscode": "1.85.0",
+		"@vscode/vsce": "4.0.0",
 		"monaco-editor": "^0.52.2",
 		"typescript": "5.4.5"
 	}

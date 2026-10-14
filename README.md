@@ -1,10 +1,12 @@
-# Yiqi's LatexSnips
+# vscode-hypersnips
 
-Yiqi's LatexSnips 是一个面向 VS Code 的 LaTeX 数学公式 snippet 扩展。项目基于 HyperSnips，保留了类似 UltiSnips 的可编程 snippet 语法，并针对 Markdown / LaTeX 写作增加了数学环境识别和 `${VISUAL}` 选中文本替换能力。
+vscode-hypersnips 是一个面向 VS Code 的 LaTeX 数学公式 snippet 扩展。项目基于 HyperSnips，保留了类似 UltiSnips 的可编程 snippet 语法，并针对 Markdown / LaTeX 写作增加了数学环境识别和 `${VISUAL}` 选中文本替换能力。
 
-仓库地址：<https://github.com/yiqiyang33/Yiqi-s-LatexSnips>
+仓库地址：<https://github.com/pasiooooo/vscode-hypersnips>
 
-> 如果已经安装原版 HyperSnips，建议先禁用或卸载。两个扩展会注册相近的命令和 snippet 行为，同时启用时容易互相干扰。
+当前维护者：`pasiooooo`。扩展 ID：`pasiooooo.vscode-hypersnips`。
+
+> 安装本 fork 前，请先禁用或卸载此前安装的旧版扩展及原版 HyperSnips，避免重复处理按键和 snippet。改名后仍兼容 `hsnips.*` 命令、设置与已有 `.hsnips` 文件，无需迁移 snippet 目录。
 
 ## 功能特性
 
@@ -26,7 +28,7 @@ Yiqi's LatexSnips 是一个面向 VS Code 的 LaTeX 数学公式 snippet 扩展�
 
 ## 快速开始
 
-1. 在命令面板运行 `Yiqi's LatexSnips: Open Snippets Directory`。
+1. 在命令面板运行 `vscode-hypersnips: Open Snippets Directory`。
 2. 在打开的目录中新建目标语言对应的 snippet 文件，例如：
    - `markdown.hsnips`：用于 Markdown。
    - `latex.hsnips`：用于 LaTeX。
@@ -67,7 +69,7 @@ hsnips/
       latex.hsnips
 ```
 
-运行 `Yiqi's LatexSnips: Select Snippet Profile` 可以切换当前 profile。加载顺序是 base snippets 加 active profile snippets；同语言 snippets 合并后继续按 priority 排序。`hsnips.profiles.activeProfile` 为空时只加载 base。
+运行 `vscode-hypersnips: Select Snippet Profile` 可以切换当前 profile。加载顺序是 base snippets 加 active profile snippets；同语言 snippets 合并后继续按 priority 排序。`hsnips.profiles.activeProfile` 为空时只加载 base。
 
 ## Context 配置
 
@@ -191,13 +193,34 @@ c & d
 
 在这些环境中，Tab 会优先插入 ` & `，不会被 snippet placeholder 跳转抢走；这对矩阵 snippet 展开后光标停在空单元格行的情况也生效。如果当前行不适合插入 ` & `，例如 `\begin{...}` / `\end{...}` 行、已经以 `\\` 结尾的行、注释中或 Markdown 代码块中，则退回默认 Tab/snippet 行为。
 
+这些环境（包括 `hsnips.context.extraAlignmentEnvironments` 添加的环境）还支持源码自动对齐：输入、删除、粘贴或智能 Tab／Enter 后，停顿约 150 ms，会调整当前环境中各行 `&`、行尾 `\\` 和行尾注释 `%` 前的空格。数学环境和表格中的行内公式还会对齐同一列中运算符结构相同的 `+`、`-`、`=`；表格环境保留普通文本中的连字符和等号。例如：
+
+```tex
+\begin{tabular}{llll}
+  示例机构甲 & 测试人员甲    & 示例城    & DEMO \\ % 第一行
+  Demo Lab   & Sample Person & Demo City &      \\ % 第二行
+\end{tabular}
+```
+
+Windows 本地扩展会自动读取当前文件生效的字体、字号、字重和字间距，使用系统字体测量字符宽度并缓存，换字体后重新测量。首次测量可能稍慢，无需手动填写字体；所有测量都在本机完成。非等宽字体只能用整数个空格逼近目标位置，可能有不到一个空格的误差。其他系统、远程扩展宿主或系统测量不可用时，回退为 Unicode 列宽（中文及全角字符两列）。Tab 按编辑器的 Tab 宽度计算。
+
+自动对齐默认开启。可在设置中关闭 **Hsnips: Auto Align: Enabled**，或在用户、工作区及语言专属设置中配置：
+
+```json
+"hsnips.autoAlign.enabled": false
+```
+
+设置立即生效，并取消尚未执行的对齐；智能 Tab 插入 ` & ` 和智能 Enter 仍可使用。
+
+只修改分隔处的空格，保留缩进、单元格内容和注释文字；`\&`、`\%`、花括号参数内的符号及一元正负号不参与对齐。独立注释行、代码块、verbatim 内容和包含嵌套环境边界的行保持原样，内层环境单独对齐。环境需要有匹配的 `\begin`／`\end`，且数据行独占源码行。自动对齐与触发它的编辑合并撤销，撤销／重做本身不触发对齐。
+
 如果修改或本地编译后按键行为没有变化，先执行 `npm run compile`，然后在 VS Code / Cursor 中运行 `Developer: Reload Window`。按键绑定和 `out/` 编译产物都需要重新加载后才会被当前扩展实例使用。
 
 Enter 逻辑同时带有文档变更兜底：如果其他扩展或编辑器模式先把 Enter 处理成了普通换行，扩展会在换行后立即检查上一行并补上缺失的 `\\`。
 
 ## 环境转换
 
-运行 `Yiqi's LatexSnips: Convert LaTeX Environment` 可以转换当前光标所在环境：
+运行 `vscode-hypersnips: Convert LaTeX Environment` 可以转换当前光标所在环境：
 
 - `align`、`align*`、`aligned`、`equation`、`equation*`、`split`、`gather`、`gather*`
 - `matrix`、`pmatrix`、`bmatrix`、`Bmatrix`、`vmatrix`、`Vmatrix`、`smallmatrix`、`cases`
@@ -205,13 +228,13 @@ Enter 逻辑同时带有文档变更兜底：如果其他扩展或编辑器模�
 
 如果光标在 `\[...\]` 或 `$$...$$` 内，会把 display math delimiter 转为所选环境。如果有选区且不在已有环境内，会用目标环境包裹选区。转换到表格类环境时会保留已有列格式；没有列格式时会提示输入，默认是 `c`，`tabularx` / `tabular*` 默认使用 `\linewidth`。
 
-直接修改 `\begin{...}` 或 `\end{...}` 内的环境名时，扩展会尝试同步另一端名称。若自动同步没有触发，可以运行 `Yiqi's LatexSnips: Rename Matching LaTeX Environment` 手动同步当前环境。
+直接修改 `\begin{...}` 或 `\end{...}` 内的环境名时，扩展会尝试同步另一端名称。若自动同步没有触发，可以运行 `vscode-hypersnips: Rename Matching LaTeX Environment` 手动同步当前环境。
 
-`Yiqi's LatexSnips: Wrap Math Structure` 可以把选区或当前公式 body 包裹成 `aligned`、`cases`、`split`、`matrix`、`pmatrix`、`bmatrix`、`equation`、`align` 等结构。`Yiqi's LatexSnips: Unwrap Math Structure` 会移除当前最外层支持的数学环境或 display math delimiter，并保留内部内容。
+`vscode-hypersnips: Wrap Math Structure` 可以把选区或当前公式 body 包裹成 `aligned`、`cases`、`split`、`matrix`、`pmatrix`、`bmatrix`、`equation`、`align` 等结构。`vscode-hypersnips: Unwrap Math Structure` 会移除当前最外层支持的数学环境或 display math delimiter，并保留内部内容。
 
 ## Snippet 管理器
 
-运行 `Yiqi's LatexSnips: Open Snippet Manager` 可以打开 Webview 管理器：
+运行 `vscode-hypersnips: Open Snippet Manager` 可以打开 Webview 管理器：
 
 - 按 `.hsnips` 文件浏览 snippet。
 - 搜索 trigger、description、flags 和 body。
@@ -244,26 +267,26 @@ endsnippet
 
 扩展提供以下命令：
 
-- `Yiqi's LatexSnips: Open Snippets Directory`
-- `Yiqi's LatexSnips: Open Snippet File`
-- `Yiqi's LatexSnips: Open Snippet Manager`
-- `Yiqi's LatexSnips: Select Snippet Profile`
-- `Yiqi's LatexSnips: Open Active Snippet Profile`
-- `Yiqi's LatexSnips: Reload Snippets`
-- `Yiqi's LatexSnips: Convert LaTeX Environment`
-- `Yiqi's LatexSnips: Rename Matching LaTeX Environment`
-- `Yiqi's LatexSnips: Wrap Math Structure`
-- `Yiqi's LatexSnips: Unwrap Math Structure`
-- `Yiqi's LatexSnips: Smart Math Enter`
-- `Yiqi's LatexSnips: Insert Matrix Column Separator`
-- `Yiqi's LatexSnips: Smart Alignment Tab`
+- `vscode-hypersnips: Open Snippets Directory`
+- `vscode-hypersnips: Open Snippet File`
+- `vscode-hypersnips: Open Snippet Manager`
+- `vscode-hypersnips: Select Snippet Profile`
+- `vscode-hypersnips: Open Active Snippet Profile`
+- `vscode-hypersnips: Reload Snippets`
+- `vscode-hypersnips: Convert LaTeX Environment`
+- `vscode-hypersnips: Rename Matching LaTeX Environment`
+- `vscode-hypersnips: Wrap Math Structure`
+- `vscode-hypersnips: Unwrap Math Structure`
+- `vscode-hypersnips: Smart Math Enter`
+- `vscode-hypersnips: Insert Matrix Column Separator`
+- `vscode-hypersnips: Smart Alignment Tab`
 
 ## 开发
 
-安装依赖并编译：
+使用 Node.js 22 或更新版本，安装依赖并编译：
 
 ```sh
-npm install
+npm ci
 npm run compile
 ```
 
@@ -274,8 +297,28 @@ npm run compile
 - `npm run lint`：运行 TypeScript 静态检查。
 - `npm test`：运行核心 LaTeX 编辑逻辑测试。
 - `npm run check`：依次运行静态检查和测试。
+- `npm run package`：生成 `dist/vscode-hypersnips-<version>.vsix`。
+
+目录按职责组织：`src/` 为扩展源码，`test/` 为测试和 fixture，`scripts/` 为构建脚本，`images/` 为图标资源。测试放在 `src/` 中也能工作；本项目将它们独立出来，避免进入扩展编译产物。`out/`、`.test-out/` 和 `dist/` 分别存放扩展编译结果、测试编译结果和安装包，均不提交 Git；测试和构建文件不打入 VSIX。
 
 Snippet Manager 使用 `monaco-editor` 的精简运行时资源。`vsce package` 会先运行 `npm run prepare-monaco`，只复制 Monaco editor core、worker、字体和语言包到 `media/monaco`，避免把整个 `node_modules/monaco-editor` 打进 VSIX。
+
+本地打包：
+
+```sh
+npm run package
+```
+
+## 自动发布
+
+推送到 `main` 或提交 Pull Request 时，GitHub Actions 会在 Linux 和 Windows 上检查并运行测试，成功后生成 VSIX artifact。发布新版本时运行：
+
+```sh
+npm version patch
+git push origin main --follow-tags
+```
+
+推送 `v<version>` 标签会自动创建 GitHub Release，并上传对应的 VSIX。标签版本必须与 `package.json` 一致，检查或打包失败不会发布。流程使用 GitHub 提供的 `GITHUB_TOKEN`，无需另配发布密钥；不会发布到 VS Code Marketplace。
 
 ## 致谢
 

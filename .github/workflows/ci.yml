@@ -1,11 +1,34 @@
-name: CI
+name: CI and release
 
 on:
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  check-and-package:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  package:
+    needs: check
     runs-on: ubuntu-latest
 
     steps:
@@ -15,23 +38,41 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
+
+      - name: Verify release version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
 
       - name: Install
         run: npm ci
 
-      - name: Check
-        run: npm run check
-
-      - name: Prepare Monaco runtime
-        run: npm run prepare-monaco
-
       - name: Package VSIX
-        run: npx --yes @vscode/vsce package --out yiqis-latexsnips.vsix
+        run: npm run package
 
       - name: Upload VSIX
         uses: actions/upload-artifact@v4
         with:
-          name: yiqis-latexsnips-vsix
-          path: yiqis-latexsnips.vsix
+          name: vscode-hypersnips-vsix
+          path: dist/*.vsix
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vscode-hypersnips-vsix
+          path: dist
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.vsix --verify-tag --title "$GITHUB_REF_NAME" --generate-notes

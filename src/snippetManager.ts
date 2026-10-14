@@ -990,7 +990,7 @@ export function registerSnippetManager(
       let monacoRoot = vscode.Uri.joinPath(context.extensionUri, 'media', 'monaco');
       panel = vscode.window.createWebviewPanel(
         'hsnipsSnippetManager',
-        "Yiqi's LatexSnips",
+        "vscode-hypersnips",
         vscode.ViewColumn.One,
         {
           enableScripts: true,

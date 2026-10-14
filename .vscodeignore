@@ -6,8 +6,12 @@
 node_modules/**
 scripts/**
 src/**
+test/**
+.test-out/**
+dist/**
 out/test/**
 syntaxes/*.yaml
 tsconfig.json
+tsconfig.test.json
 package-lock.json
 *.vsix

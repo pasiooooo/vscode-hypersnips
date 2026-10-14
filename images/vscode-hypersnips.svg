@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title>vscode-hypersnips</title>
+  <rect width="256" height="256" rx="48" fill="#111c32"/>
+  <g fill="none" stroke="#f5f8ff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M83 62h-7q-14 0-14 16v22q0 17-16 28 16 11 16 28v22q0 16 14 16h7"/>
+    <path d="M173 62h7q14 0 14 16v22q0 17 16 28-16 11-16 28v22q0 16-14 16h-7"/>
+  </g>
+  <path d="M146 60 101 137h26l-17 59 48-81h-27z" fill="#46d7ec"/>
+</svg>

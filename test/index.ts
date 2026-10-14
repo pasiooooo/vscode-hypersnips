@@ -10,7 +10,7 @@ import {
   shouldInsertAlignmentSeparator,
   SmartEnterPlan,
   TextEdit,
-} from '../latexEdit';
+} from '../src/latexEdit';
 import {
   createEnvironmentNameOnlyRenamePlan,
   createEnvironmentNameSyncPlan,
@@ -20,7 +20,7 @@ import {
   createWrapEnvironmentPlan,
   findLatexEnvironmentPairAt,
   formatTableArguments,
-} from '../environmentConvert';
+} from '../src/environmentConvert';
 import {
   assertExpectedSnippetDocumentHash,
   appendSnippet,
@@ -28,12 +28,15 @@ import {
   deleteSnippet,
   hashText,
   parseSnippetDocument,
-} from '../snippetDocument';
+} from '../src/snippetDocument';
 import {
   discoverSnippetProfiles,
   getSnippetFilesForProfile,
-} from '../snippetProfiles';
-import { parse } from '../parser';
+} from '../src/snippetProfiles';
+import { parse } from '../src/parser';
+import { testLatexAlignment } from './latexAlignment';
+import { testFontMetrics } from './fontMetrics';
+import { testAutoAlignSetting } from './autoAlign';
 
 function marked(input: string) {
   let offset = input.indexOf('|');
@@ -572,7 +575,7 @@ function testTextOnlySnippetFlag() {
 }
 
 function testSnippetProfiles() {
-  let tempDir = mkdtempSync(path.join(os.tmpdir(), 'yiqi-snips-'));
+  let tempDir = mkdtempSync(path.join(os.tmpdir(), 'vscode-hypersnips-'));
   try {
     writeFileSync(
       path.join(tempDir, 'latex.hsnips'),
@@ -644,6 +647,7 @@ testMathContext();
 testSmartEnter();
 testSmartEnterRecovery();
 testAlignmentTab();
+testLatexAlignment();
 testEnvironmentConversion();
 testEnvironmentNameSync();
 testWrapUnwrapMathStructure();
@@ -651,4 +655,9 @@ testSnippetDocument();
 testTextOnlySnippetFlag();
 testSnippetProfiles();
 
-console.log('latex edit tests passed');
+void testAutoAlignSetting().then(testFontMetrics).then(() => {
+  console.log('latex edit tests passed');
+}, (error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

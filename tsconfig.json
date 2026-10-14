@@ -10,5 +10,5 @@
     "rootDir": "src",
     "allowJs": false
   },
-  "exclude": ["node_modules", ".vscode-test"]
+  "include": ["src/**/*.ts"]
 }

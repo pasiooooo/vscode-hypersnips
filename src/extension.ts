@@ -4,6 +4,8 @@ import * as path from 'path';
 import { openExplorer } from './openFileExplorer';
 import { HSnippet } from './hsnippet';
 import { HSnippetInstance } from './hsnippetInstance';
+import { getAlignmentEdits, mapAlignmentOffset } from './latexAlignment';
+import { getFontCharacterWidths } from './fontMetrics';
 import { parse } from './parser';
 import { getSnippetDir } from './utils';
 import { getAutomaticCompletion, getCompletions, CompletionInfo } from './completion';
@@ -45,6 +47,8 @@ const SNIPPET_STACK: HSnippetInstance[] = [];
 
 let insertingSnippet = false;
 let applyingLatexEdit = false;
+let aligningLatex = false;
+let alignmentTimer: ReturnType<typeof setTimeout> | undefined;
 let latexContextCache:
     | {
         document: vscode.TextDocument;
@@ -170,6 +174,90 @@ async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[]) {
     } finally {
         applyingLatexEdit = false;
     }
+}
+
+function isAutoAlignEnabled(document: vscode.TextDocument) {
+    return vscode.workspace.getConfiguration('hsnips', {
+        uri: document.uri, languageId: document.languageId,
+    }).get<boolean>('autoAlign.enabled', true);
+}
+
+function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocumentChangeEvent) {
+    if (aligningLatex) return;
+    if (alignmentTimer) clearTimeout(alignmentTimer);
+    if (event.reason || !isLatexLikeDocument(event.document) ||
+        !event.contentChanges.length || !isAutoAlignEnabled(event.document)) return;
+
+    let version = event.document.version;
+    let offsets: number[] = [];
+    let delta = 0;
+    for (let change of [...event.contentChanges].sort((a, b) => a.rangeOffset - b.rangeOffset)) {
+        let start = change.rangeOffset + delta;
+        offsets.push(start, start + change.text.length);
+        for (let match of change.text.matchAll(/\\begin\s*\{[^}]+\}/g)) {
+            offsets.push(start + match.index! + match[0].length);
+        }
+        delta += change.text.length - change.rangeLength;
+    }
+
+    alignmentTimer = setTimeout(async () => {
+        alignmentTimer = undefined;
+        if (vscode.window.activeTextEditor != editor || editor.document.version != version ||
+            !isAutoAlignEnabled(editor.document)) return;
+        let text = editor.document.getText();
+        let options = getLatexContextOptions();
+        if (!offsets.some((offset) => {
+            let context = getLatexContext(text, offset, options);
+            return context.canSmartTab || (context.inComment && context.environmentStack.length > 0);
+        })) return;
+        let font = vscode.workspace.getConfiguration('editor', {
+            uri: editor.document.uri, languageId: editor.document.languageId,
+        });
+        let characterWidths = vscode.env.remoteName ? new Map<string, number>() : await getFontCharacterWidths({
+            family: font.get<string>('fontFamily', 'Consolas, monospace'),
+            size: font.get<number>('fontSize', 14),
+            weight: font.get<string>('fontWeight', 'normal'),
+            letterSpacing: font.get<number>('letterSpacing', 0),
+        }, text);
+        if (vscode.window.activeTextEditor != editor || editor.document.version != version ||
+            !isAutoAlignEnabled(editor.document)) return;
+        let tabSize = typeof editor.options.tabSize == 'number' ? editor.options.tabSize : 4;
+        let edits = new Map<number, TextEdit>();
+        for (let offset of offsets) {
+            for (let edit of getAlignmentEdits(text, offset, options, tabSize, characterWidths)) {
+                edits.set(edit.start, edit);
+            }
+        }
+        if (!edits.size) return;
+        let alignmentEdits = [...edits.values()];
+        let selections = editor.selections.map((selection) => ({
+            anchor: mapAlignmentOffset(editor.document.offsetAt(selection.anchor), alignmentEdits),
+            active: mapAlignmentOffset(editor.document.offsetAt(selection.active), alignmentEdits),
+        }));
+        aligningLatex = true;
+        applyingLatexEdit = true;
+        try {
+            let applied = await editor.edit((builder) => {
+                for (let edit of alignmentEdits) {
+                    builder.replace(new vscode.Range(
+                        editor.document.positionAt(edit.start),
+                        editor.document.positionAt(edit.end)
+                    ), edit.text);
+                }
+            }, { undoStopBefore: false, undoStopAfter: false });
+            if (applied && editor.document.version == version + 1) {
+                editor.selections = selections.map((selection) => new vscode.Selection(
+                    editor.document.positionAt(selection.anchor),
+                    editor.document.positionAt(selection.active)
+                ));
+            }
+        } catch (error) {
+            console.error(error);
+        } finally {
+            aligningLatex = false;
+            applyingLatexEdit = false;
+        }
+    }, 150);
 }
 
 async function smartEnter(editor: vscode.TextEditor) {
@@ -572,7 +660,7 @@ async function selectSnippetProfile() {
         .update('profiles.activeProfile', picked.profile, vscode.ConfigurationTarget.Global);
     await loadSnippets();
     vscode.window.showInformationMessage(
-        picked.profile ? `Yiqi's LatexSnips profile: ${picked.profile}` : "Yiqi's LatexSnips profile: base only"
+        picked.profile ? `vscode-hypersnips profile: ${picked.profile}` : "vscode-hypersnips profile: base only"
     );
 }
 
@@ -630,6 +718,9 @@ export async function expandSnippet(
 }
 
 export function activate(context: vscode.ExtensionContext) {
+    context.subscriptions.push(new vscode.Disposable(() => {
+        if (alignmentTimer) clearTimeout(alignmentTimer);
+    }));
     loadSnippets();
     if (vscode.window.activeTextEditor) {
         DOCUMENT_TEXT_CACHE.set(
@@ -780,13 +871,14 @@ export function activate(context: vscode.ExtensionContext) {
             try {
                 if (activeEditor && e.document == activeEditor.document) {
                     updateMathContext(activeEditor);
+                    scheduleAlignment(activeEditor, e);
                 }
 
                 if (SNIPPET_STACK.length && SNIPPET_STACK[0].editor.document == e.document) {
                     SNIPPET_STACK[0].update(e.contentChanges);
                 }
 
-                if (insertingSnippet) return;
+                if (insertingSnippet || aligningLatex) return;
 
                 let mainChange = e.contentChanges[0];
 
@@ -867,6 +959,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration('hsnips.autoAlign') && alignmentTimer) {
+                clearTimeout(alignmentTimer);
+                alignmentTimer = undefined;
+            }
             if (event.affectsConfiguration('hsnips.context')) {
                 latexContextCache = undefined;
                 latexContextOptionsCache = undefined;
