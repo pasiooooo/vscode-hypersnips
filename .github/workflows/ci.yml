@@ -2,7 +2,7 @@ name: CI and release
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/performance-refactor]
     tags: ['v*']
   pull_request:
     branches: [main]
@@ -26,6 +26,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Extension host tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:integration
+      - name: Extension host tests (Windows)
+        if: runner.os == 'Windows'
+        run: npm run test:integration
 
   package:
     needs: check
@@ -50,13 +56,18 @@ jobs:
         run: npm ci
 
       - name: Package VSIX
+        if: github.ref != 'refs/heads/codex/performance-refactor'
         run: npm run package
+
+      - name: Package performance preview
+        if: github.ref == 'refs/heads/codex/performance-refactor'
+        run: npm run package:performance
 
       - name: Upload VSIX
         uses: actions/upload-artifact@v4
         with:
           name: vscode-hypersnips-vsix
-          path: dist/*.vsix
+          path: dist/**/*.vsix
           if-no-files-found: error
 
   release:

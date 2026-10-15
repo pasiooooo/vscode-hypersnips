@@ -16,3 +16,4 @@ tsconfig.test.json
 package-lock.json
 *.vsix
 docs/**
+.vscode-test/**
