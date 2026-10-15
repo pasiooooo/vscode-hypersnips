@@ -1,3 +1,4 @@
+import type { LatexDocumentSnapshot } from './latexDocumentState';
 import {
   findLatexCommentStart,
   getLatexContext,
@@ -103,9 +104,10 @@ function shouldAppendMathLineBreak(line: string) {
 export function getSmartEnterPlan(
   text: string,
   offset: number,
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
 ): SmartEnterPlan {
-  let context = getLatexContext(text, offset, options);
+  let context = getLatexContext(text, offset, options, snapshot);
   if (!context.canSmartEnter) {
     return { handled: false, edits: [] };
   }
@@ -160,9 +162,10 @@ export function getSmartEnterRecoveryPlan(
   beforeEnterText: string,
   offsetBeforeEnter: number,
   currentText: string,
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
 ): SmartEnterPlan {
-  let desiredPlan = getSmartEnterPlan(beforeEnterText, offsetBeforeEnter, options);
+  let desiredPlan = getSmartEnterPlan(beforeEnterText, offsetBeforeEnter, options, snapshot);
   if (!desiredPlan.handled || typeof desiredPlan.cursorOffset != 'number') {
     return { handled: false, edits: [] };
   }
@@ -183,9 +186,10 @@ export function getSmartEnterRecoveryPlan(
 export function shouldInsertAlignmentSeparator(
   text: string,
   offset: number,
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
 ) {
-  let context = getLatexContext(text, offset, options);
+  let context = getLatexContext(text, offset, options, snapshot);
   if (!context.canSmartTab) {
     return false;
   }

@@ -1,3 +1,4 @@
+import type { LatexDocumentSnapshot } from './latexDocumentState';
 export const ROW_BREAK_ENVIRONMENTS = [
   'align',
   'align*',
@@ -496,8 +497,10 @@ function getMathDelimiterStackFromSanitized(beforeCursor: string) {
 export function getLatexContext(
   text: string,
   offset: number,
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
 ): LatexEditorContext {
+  if (snapshot) return snapshot.contextAt(offset);
   let resolved = resolveLatexContextOptions(options);
   let parsedPrefix = createLatexParsingPrefix(text, offset);
   let environmentFrames = getOpenLatexEnvironmentFramesFromSanitized(

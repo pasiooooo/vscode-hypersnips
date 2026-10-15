@@ -1,3 +1,4 @@
+import type { LatexDocumentSnapshot } from './latexDocumentState';
 import {
   findLatexCommentStart,
   getLatexContext,
@@ -111,18 +112,19 @@ export function getAlignmentEdits(
   offset: number,
   options: LatexContextOptions = {},
   tabSize = 4,
-  characterWidths: ReadonlyMap<string, number> = new Map()
+  characterWidths: ReadonlyMap<string, number> = new Map(),
+  snapshot?: LatexDocumentSnapshot
 ): TextEdit[] {
-  let context = getLatexContext(text, offset, options);
+  let context = getLatexContext(text, offset, options, snapshot);
   if (context.inMarkdownCode || context.inTextLikeCommand || context.inVerbatimLikeEnvironment) {
     return [];
   }
-  let pair = findLatexEnvironmentPairAt(text, offset, options);
+  let pair = findLatexEnvironmentPairAt(text, offset, options, snapshot);
   if (!pair || !resolveLatexContextOptions(options).alignmentEnvironments.includes(pair.name)) {
     return [];
   }
 
-  let sanitized = sanitizeLatexForParsing(text);
+  let sanitized = snapshot ? snapshot.sanitizedText : sanitizeLatexForParsing(text);
   let rows: AlignmentRow[] = [];
   let nested = 0;
   let braces = 0;
