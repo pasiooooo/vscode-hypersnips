@@ -46,12 +46,15 @@ export async function run() {
     await until(() => editor.document.getText().includes(' & '), 'smart Tab edit');
     assert.strictEqual(editor.document.getText(), '\\begin{align}\n  a & \n\\end{align}');
     assert.strictEqual(editor.selection.active.character, 6);
+    const beforeEnter = editor.document.getText();
     await vscode.commands.executeCommand('hsnips.smartEnter');
     await until(() => editor.document.lineCount === 4, 'smart Enter edit');
     assert.strictEqual(editor.document.getText(), '\\begin{align}\n  a & \\\\\n  \n\\end{align}');
     const after = editor.document.getText();
     await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === beforeEnter, 'undo restores pre-Enter text');
     await vscode.commands.executeCommand('redo');
+    await until(() => editor.document.getText() === after, 'redo restores Enter text');
     assert.strictEqual(editor.document.getText(), after);
   });
   await test('typing environment name updates matching end', async () => {
@@ -74,6 +77,18 @@ export async function run() {
     await type('tt');
     await until(() => editor.document.getText() === 'TEXT', 'text expansion');
   });
+  await test('completion provider and accepted manual snippet', async () => {
+    const editor = await openMarked('man|');
+    const result = await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', editor.document.uri, editor.selection.active);
+    const item = result?.items.find(item => item.detail === 'Manual fixture');
+    assert.ok(item, 'manual snippet must appear in completion results');
+    assert.strictEqual(item!.label, 'manual');
+    assert.ok(item!.command, 'completion must carry its expansion command');
+    assert.ok(item!.range instanceof vscode.Range);
+    await editor.edit(builder => builder.replace(item!.range as vscode.Range, item!.insertText as string));
+    await vscode.commands.executeCommand(item!.command!.command, ...(item!.command!.arguments || []));
+    await until(() => editor.document.getText() === 'MANUAL', 'accepted manual snippet expansion');
+  });
   await test('multi-cursor Tab and comment protection', async () => {
     const editor = await openMarked('\\begin{matrix}\na|x\nby\n\\end{matrix}');
     editor.selections = [new vscode.Selection(1, 1, 1, 1), new vscode.Selection(2, 1, 2, 1)];
@@ -81,8 +96,9 @@ export async function run() {
     await until(() => editor.document.getText().includes(' & '), 'smart Tab edit');
     assert.strictEqual(editor.document.getText(), '\\begin{matrix}\na & x\nb & y\n\\end{matrix}');
     const comment = await openMarked('\\begin{align}\n% comment|\n\\end{align}');
+    const version = comment.document.version;
     await vscode.commands.executeCommand('hsnips.smartTab');
-    await until(() => editor.document.getText().includes(' & '), 'smart Tab edit');
+    await until(() => comment.document.version > version, 'comment receives normal Tab edit');
     assert.ok(!comment.document.getText().includes('&'), 'comment must not insert an alignment separator');
   });
   await test('auto alignment changes whitespace only and stops when disabled', async () => {

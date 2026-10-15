@@ -38,6 +38,7 @@ export async function testAutoAlignSetting() {
     workspace: {
       getConfiguration: () => ({ get: (key: string, fallback: unknown) => key == 'autoAlign.enabled' ? enabled : fallback }),
       onDidSaveTextDocument: disposable,
+      onDidCloseTextDocument: disposable,
       onDidChangeTextDocument: (handler: typeof change) => { change = handler; return disposable(); },
       onDidChangeConfiguration: (handler: typeof configure) => { configure = handler; return disposable(); },
     },
@@ -63,7 +64,7 @@ export async function testAutoAlignSetting() {
         if (holdMeasurement) await new Promise<void>((resolve) => { finishMeasurement = resolve; });
         return new Map();
       } };
-      if (name == './latexEdit' || name == './latexAlignment') return require(path.join(__dirname, '../src', name));
+      if (name == './latexEdit' || name == './latexAlignment' || name == './latexDocumentState') return require(path.join(__dirname, '../src', name));
       return {};
     },
   });
@@ -90,3 +91,4 @@ export async function testAutoAlignSetting() {
   await running;
   assert.strictEqual(edits, 1, 'turning alignment off during measurement prevents edits');
 }
+

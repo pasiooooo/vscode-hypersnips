@@ -20,14 +20,14 @@ async function main() {
   writeFileSync(path.join(snippets, 'latex.hsnips'), [
     'snippet zz "Automatic fixture" iA', 'EXPANDED', 'endsnippet',
     'snippet mm "Math fixture" iAm', 'MATH', 'endsnippet',
-    'snippet tt "Text fixture" iAt', 'TEXT', 'endsnippet', '',
+    'snippet tt "Text fixture" iAt', 'TEXT', 'endsnippet',
+    'snippet manual "Manual fixture" w', 'MANUAL', 'endsnippet', '',
   ].join('\n'));
   await runTests({
     vscodeExecutablePath: process.env.VSCODE_TEST_EXECUTABLE,
     version: process.env.VSCODE_TEST_VERSION || 'stable',
     extensionDevelopmentPath: root,
     extensionTestsPath: path.join(root, '.test-out/test/integration/suite.js'),
-    extensionTestsEnv: { HSNIPS_TEST_WORKSPACE: workspace },
     launchArgs: [workspace, '--user-data-dir', userData, '--extensions-dir', path.join(isolated, 'extensions'),
       '--disable-extensions', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-gpu'],
   });
