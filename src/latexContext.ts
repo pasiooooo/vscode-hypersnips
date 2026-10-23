@@ -244,6 +244,10 @@ export function sanitizeLatexForParsing(
   text: string,
   markdownFenceRanges = getMarkdownFenceRanges(text)
 ) {
+  if (!markdownFenceRanges.length && !text.includes('%') &&
+    !text.includes('`') && !text.includes('<!--')) {
+    return text;
+  }
   let chars = text.split('');
 
   for (let range of markdownFenceRanges) {
