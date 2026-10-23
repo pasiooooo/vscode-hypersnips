@@ -21,12 +21,13 @@ async function main() {
     'snippet zz "Automatic fixture" iA', 'EXPANDED', 'endsnippet',
     'snippet mm "Math fixture" iAm', 'MATH', 'endsnippet',
     'snippet tt "Text fixture" iAt', 'TEXT', 'endsnippet',
-    'snippet manual "Manual fixture" w', 'MANUAL', 'endsnippet', '',
+    'snippet manual "Manual fixture" w', 'MANUAL', 'endsnippet',
+    'snippet dd "Dynamic fixture" w', '$1 = ``rv = (t[0] || "seed").toUpperCase()``$0', 'endsnippet', '',
   ].join('\n'));
   await runTests({
     vscodeExecutablePath: process.env.VSCODE_TEST_EXECUTABLE,
     version: process.env.VSCODE_TEST_VERSION || 'stable',
-    extensionDevelopmentPath: root,
+    extensionDevelopmentPath: process.env.VSCODE_TEST_EXTENSION_ROOT || root,
     extensionTestsPath: path.join(root, '.test-out/test/integration/suite.js'),
     launchArgs: [workspace, '--user-data-dir', userData, '--extensions-dir', path.join(isolated, 'extensions'),
       '--disable-extensions', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-gpu'],

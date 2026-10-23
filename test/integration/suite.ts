@@ -40,6 +40,19 @@ export async function run() {
     catch (error) { failures.push(name + ': ' + String(error)); console.error(error); }
     finally { await configure(false); await closeAll(); }
   }
+  await test('dynamic snippet follows placeholder edits', async () => {
+    const editor = await openMarked('dd|');
+    // Let queued visibility events finish before starting a snippet session.
+    await delay(200);
+    const result = await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', editor.document.uri, editor.selection.active);
+    const item = result?.items.find(item => item.detail === 'Dynamic fixture');
+    assert.ok(item?.command?.arguments?.[0], 'dynamic completion is available');
+    await vscode.commands.executeCommand(item!.command!.command, ...item!.command!.arguments!);
+    await until(() => editor.document.getText() === ' = SEED', 'dynamic expansion');
+    await type('word');
+    await until(() => editor.document.getText() === 'word = WORD', 'dynamic placeholder update');
+    await vscode.commands.executeCommand('hsnips.leaveSnippet');
+  });
   await test('smart Tab and Enter, caret and undo/redo', async () => {
     const editor = await openMarked('\\begin{align}\n  a|\n\\end{align}');
     await vscode.commands.executeCommand('hsnips.smartTab');
@@ -139,6 +152,7 @@ export async function run() {
       await type('q');
       assert.ok(editor.document.getText().includes('xq&=y'));
       await closeAll();
+      await until(() => editor.document.isClosed, 'closed test document released');
     }
   });
   if (failures.length) throw new Error(failures.join('\n'));

@@ -94,16 +94,24 @@ for (const count of [1000, 10000]) {
   timed('snippet compile current', () => currentParser.parse(source), {count});
 }
 if (global.gc) {
+  function releasedBatch() {
+    for (let i = 0; i < 20; i++) {
+      const state = new LatexDocumentState(large.text);
+      const updated = state.update([{ rangeOffset: large.offset, rangeLength: 0, text: 'q' }]);
+      updated.contextAt(large.offset + 1);
+    }
+  }
+  releasedBatch();
   global.gc();
   const before = process.memoryUsage().heapUsed;
-  for (let i = 0; i < 100; i++) {
-    let state = new LatexDocumentState(large.text);
-    state = state.update([{ rangeOffset: large.offset, rangeLength: 0, text: 'q' }]);
-    state.contextAt(large.offset + 1);
+  const batches = [];
+  for (let batch = 0; batch < 5; batch++) {
+    releasedBatch();
+    global.gc();
+    batches.push(process.memoryUsage().heapUsed);
   }
-  global.gc();
-  report.memory = { cycles: 100, beforeBytes: before, afterBytes: process.memoryUsage().heapUsed,
-    note: 'Synthetic parse/edit/release cycles; heap after GC is a trend check, not proof of absence of all leaks.' };
+  report.memory = { cycles: 100, warmupCycles: 20, beforeBytes: before, afterBytes: batches.at(-1), batchHeapBytes: batches,
+    note: 'Synthetic parse/edit/release cycles with references leaving helper scope; post-GC heap trend is not proof of absence of all leaks.' };
 }
 const out = path.join(root, 'dist/performance/results.json');
 fs.mkdirSync(path.dirname(out), {recursive:true});
