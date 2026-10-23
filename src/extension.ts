@@ -44,7 +44,15 @@ import {
     normalizeProfileName,
 } from './snippetProfiles';
 
-const SNIPPETS_BY_LANGUAGE: Map<string, HSnippet[]> = new Map();
+let SNIPPETS_BY_LANGUAGE: Map<string, HSnippet[]> = new Map();
+let pendingSnippetLoad: { key: string; promise: Promise<void> } | undefined;
+let profileReload: {
+    key: string;
+    promise?: Promise<void>;
+    updating: boolean;
+    observed: boolean;
+} | undefined;
+let snippetLoadSequence = 0;
 const SNIPPET_STACK: HSnippetInstance[] = [];
 
 let insertingSnippet = false;
@@ -624,35 +632,57 @@ async function unwrapMathStructure(editor: vscode.TextEditor) {
     }
 }
 
-async function loadSnippets() {
-    SNIPPETS_BY_LANGUAGE.clear();
+function snippetLoadKey() {
+    return JSON.stringify([getSnippetDir(), getActiveSnippetProfile()]);
+}
 
-    let snippetDir = getSnippetDir();
-    if (!existsSync(snippetDir)) {
-        mkdirSync(snippetDir);
-    }
-
-    for (let entry of getSnippetFilesForProfile(snippetDir, getActiveSnippetProfile())) {
-        let fileData = readFileSync(entry.filePath, 'utf8');
-        let snippetList = SNIPPETS_BY_LANGUAGE.get(entry.language);
-        if (!snippetList) {
-            snippetList = [];
-            SNIPPETS_BY_LANGUAGE.set(entry.language, snippetList);
+function loadSnippets(): Promise<void> {
+    const snippetDir = getSnippetDir();
+    const profile = getActiveSnippetProfile();
+    const key = JSON.stringify([snippetDir, profile]);
+    if (pendingSnippetLoad?.key == key) return pendingSnippetLoad.promise;
+    const sequence = ++snippetLoadSequence;
+    const promise = Promise.resolve().then(() => {
+        const next = new Map<string, HSnippet[]>();
+        if (!existsSync(snippetDir)) mkdirSync(snippetDir);
+        for (let entry of getSnippetFilesForProfile(snippetDir, profile)) {
+            let snippetList = next.get(entry.language);
+            if (!snippetList) {
+                snippetList = [];
+                next.set(entry.language, snippetList);
+            }
+            snippetList.push(...parse(readFileSync(entry.filePath, 'utf8')));
         }
-        snippetList.push(...parse(fileData));
-    }
-
-    let globalSnippets = SNIPPETS_BY_LANGUAGE.get('all');
-    if (globalSnippets) {
-        for (let [language, snippetList] of SNIPPETS_BY_LANGUAGE.entries()) {
-            if (language != 'all') snippetList.push(...globalSnippets);
+        const globalSnippets = next.get('all');
+        if (globalSnippets) {
+            for (let [language, snippetList] of next) {
+                if (language != 'all') snippetList.push(...globalSnippets);
+            }
         }
-    }
+        for (let snippetList of next.values()) {
+            snippetList.sort((a, b) => b.priority - a.priority);
+        }
+        if (sequence == snippetLoadSequence) SNIPPETS_BY_LANGUAGE = next;
+    }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`Failed to load snippets: ${message}`);
+    }).finally(() => {
+        if (pendingSnippetLoad?.promise == promise) pendingSnippetLoad = undefined;
+    });
+    pendingSnippetLoad = { key, promise };
+    return promise;
+}
 
-    // Sort snippets by descending priority.
-    for (let snippetList of SNIPPETS_BY_LANGUAGE.values()) {
-        snippetList.sort((a, b) => b.priority - a.priority);
+function loadSnippetProfile(): Promise<void> {
+    const operation = profileReload;
+    if (operation && operation.key == snippetLoadKey()) {
+        operation.observed = true;
+        operation.promise ??= loadSnippets();
+        if (!operation.updating) profileReload = undefined;
+        return operation.promise;
     }
+    profileReload = undefined;
+    return loadSnippets();
 }
 
 async function selectSnippetProfile() {
@@ -683,10 +713,26 @@ async function selectSnippetProfile() {
         return;
     }
 
-    await vscode.workspace
-        .getConfiguration('hsnips')
-        .update('profiles.activeProfile', picked.profile, vscode.ConfigurationTarget.Global);
-    await loadSnippets();
+    const configuration = vscode.workspace.getConfiguration('hsnips');
+    const unchanged = picked.profile == (configuration.get<string>('profiles.activeProfile') ?? '');
+    const operation = {
+        key: JSON.stringify([snippetDir, picked.profile]),
+        promise: undefined as Promise<void> | undefined,
+        updating: true,
+        observed: false,
+    };
+    profileReload = operation;
+    let updated = false;
+    try {
+        await configuration.update('profiles.activeProfile', picked.profile, vscode.ConfigurationTarget.Global);
+        updated = true;
+        await (operation.promise ??= loadSnippets());
+    } finally {
+        operation.updating = false;
+        if (profileReload == operation && (!updated || unchanged || operation.observed)) {
+            profileReload = undefined;
+        }
+    }
     vscode.window.showInformationMessage(
         picked.profile ? `vscode-hypersnips profile: ${picked.profile}` : "vscode-hypersnips profile: base only"
     );
@@ -1001,7 +1047,7 @@ export function activate(context: vscode.ExtensionContext) {
                 updateMathContext(vscode.window.activeTextEditor);
             }
             if (event.affectsConfiguration('hsnips.profiles.activeProfile')) {
-                loadSnippets();
+                void loadSnippetProfile();
             }
         })
     );

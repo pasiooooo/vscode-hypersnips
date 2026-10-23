@@ -1,0 +1,67 @@
+import * as assert from 'assert';
+import { readFileSync } from 'fs';
+import * as path from 'path';
+import { runInNewContext } from 'vm';
+import { parseSnippetDocument, hashText } from '../src/snippetDocument';
+class Element {
+  children:Element[]=[];textContent='';value='';disabled=false;checked=false;style:any={};classList={add(){},contains(){return false;}};className='';type='';writes=0;
+  oninput?:()=>void;onclick?:()=>void;onchange?:()=>void;
+  set innerHTML(_v:string){this.children=[];this.writes++;} append(...e:Element[]){this.children.push(...e);} appendChild(e:Element){this.children.push(e);} focus(){} setSelectionRange(){} get options(){return this.children;}
+  querySelector(selector:string):Element|undefined{return this.children.find(e=>selector==='h2'&&e.type==='h2')||this.children.map(e=>e.querySelector(selector)).find(Boolean);}
+}
+const filePath='synthetic.tex.hsnips',source='snippet sample\nbody\nendsnippet\n';
+let diskContent=source,diskMtime=42,diskWrites=0,openDirty=false;
+const exported:any={};
+runInNewContext(readFileSync(path.join(__dirname,'../src/snippetManager.js'),'utf8')+'\nexports.testing={getHtml,analyzeSnippetDocument,writeSnippetDocument};',{exports:exported,console,require:(name:string)=>{
+  if(name==='vscode')return {Uri:{joinPath:(...parts:any[])=>parts.join('/')},workspace:{get textDocuments(){return [{uri:{fsPath:filePath},isDirty:openDirty}];}}};
+  if(name==='fs')return {readFileSync:()=>diskContent,statSync:()=>({mtimeMs:diskMtime}),writeFileSync:(_p:string,c:string)=>{diskContent=c;diskWrites++;}};
+  if(name==='./utils'||name==='./snippetProfiles')return {};
+  return name.startsWith('.')?require(path.join(__dirname,'../src',name)):require(name);
+}});
+const api=exported.testing,doc={...parseSnippetDocument(source,filePath,'tex'),mtimeMs:42};
+const html=api.getHtml({asWebviewUri:(uri:string)=>uri,cspSource:'synthetic'},'extension',[doc]);
+const script=Array.from(html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g),(m:any)=>m[1]).find(s=>s.includes('acquireVsCodeApi'))!;
+const elements=new Map<string,Element>();const el=(id:string)=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id)!;};
+const timers=new Map<number,()=>void>();let timerId=0;let receive:(event:any)=>void=()=>{};const messages:any[]=[];
+runInNewContext(script,{acquireVsCodeApi:()=>({postMessage:(m:any)=>messages.push(m)}),document:{getElementById:el,createElement:(tag:string)=>{const e=new Element();e.type=tag;return e;}},window:{addEventListener:(_t:string,cb:any)=>receive=cb},setTimeout:(cb:()=>void)=>{timers.set(++timerId,cb);return timerId;},clearTimeout:(id:number)=>timers.delete(id),console});
+const flush=()=>{const callbacks=[...timers.values()];timers.clear();callbacks.forEach(cb=>cb());};
+const deliver=(r:any)=>receive({data:{type:'documentAnalyzed',requestId:r.requestId,document:api.analyzeSnippetDocument(r)}});
+const edit=(text:string)=>{el('fallbackEditor').value=text;el('fallbackEditor').oninput!();};
+const initialListWrites=el('snippetList').writes;
+const initialInspectorWrites=el('inspector').writes;
+const firstEdit=source.replace('body','one');
+edit(firstEdit);
+assert.strictEqual(el('snippetList').writes,initialListWrites,'input must not rebuild snippet list');
+assert.strictEqual(el('inspector').writes,initialInspectorWrites,'input must not rebuild inspector');
+assert.strictEqual(el('deleteSnippet').disabled,true,'stale ranges disable Delete immediately');
+assert.strictEqual(el('save').disabled,false,'dirty document enables Save');
+assert.ok(el('fileSelect').options[0].textContent.startsWith('* '));
+assert.ok(el('inspector').querySelector('h2')!.textContent.endsWith(' *'));
+flush(); const oldRequest=messages[messages.length-1];
+edit(source.replace('body','two')); flush(); const currentRequest=messages[messages.length-1];
+assert.ok(currentRequest.requestId>oldRequest.requestId);
+deliver(oldRequest);
+assert.strictEqual(el('snippetList').writes,initialListWrites,'obsolete request ignored');
+receive({data:{type:'documentAnalyzed',requestId:currentRequest.requestId,document:api.analyzeSnippetDocument(oldRequest)}});
+assert.strictEqual(el('snippetList').writes,initialListWrites,'mismatched content ignored');
+deliver(currentRequest);
+assert.strictEqual(el('snippetList').writes,initialListWrites+1,'fresh analysis refreshes results');
+assert.strictEqual(el('deleteSnippet').disabled,false);
+assert.strictEqual(el('save').disabled,false,'analysis keeps dirty flag');
+el('save').onclick!(); const saveRequest=messages[messages.length-1];
+assert.strictEqual(saveRequest.type,'saveDocument');
+assert.strictEqual(saveRequest.documentHash,hashText(source),'analysis retains saved version hash');
+assert.strictEqual(saveRequest.mtimeMs,42);
+edit(source.replace('body','during save'));
+assert.strictEqual(el('save').disabled,true,'typing during save cannot start another save');
+receive({data:{type:'error',message:'synthetic conflict'}});
+assert.strictEqual(el('save').disabled,false);
+const successful={...saveRequest,content:firstEdit};
+api.writeSnippetDocument(successful);
+assert.strictEqual(diskWrites,1);
+assert.throws(()=>api.writeSnippetDocument({...successful,documentHash:'wrong'}));
+assert.throws(()=>api.writeSnippetDocument({...successful,documentHash:undefined,mtimeMs:41}));
+openDirty=true;
+assert.throws(()=>api.writeSnippetDocument({...successful,documentHash:hashText(diskContent)}));
+assert.strictEqual(diskWrites,1,'conflicts never write');
+console.log('Manager input, freshness, dirty/save controls and disk conflict checks passed.');

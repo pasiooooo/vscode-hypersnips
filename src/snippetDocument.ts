@@ -154,9 +154,13 @@ function addDuplicateDiagnostics(document: SnippetDocument) {
   for (let snippet of document.snippets) {
     if (snippet.isRegex || !snippet.trigger) continue;
     let key = snippet.trigger;
-    byTrigger.set(key, [...(byTrigger.get(key) || []), snippet]);
+    let group = byTrigger.get(key);
+    if (group) group.push(snippet);
+    else byTrigger.set(key, [snippet]);
     if (snippet.flags.includes('A')) {
-      automaticByTrigger.set(key, [...(automaticByTrigger.get(key) || []), snippet]);
+      let automaticGroup = automaticByTrigger.get(key);
+      if (automaticGroup) automaticGroup.push(snippet);
+      else automaticByTrigger.set(key, [snippet]);
     }
   }
 

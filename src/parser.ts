@@ -34,7 +34,7 @@ function countPlaceholders(string: string) {
   return string.split(/\$\d+|\$\{\d+\}/g).length - 1;
 }
 
-function parseSnippet(headerLine: string, lines: string[]): IHSnippetInfo {
+function parseSnippet(headerLine: string, lines: string[], cursor: { index: number }): IHSnippetInfo {
   let header = parseSnippetHeader(headerLine);
 
   let script = [`(require, t, m, w, path) => {`];
@@ -45,16 +45,18 @@ function parseSnippet(headerLine: string, lines: string[]): IHSnippetInfo {
   let isCode = false;
   let placeholders = 0;
 
-  while (lines.length > 0) {
-    let line = lines.shift() as string;
+  let pending: string | undefined;
+  while (pending !== undefined || cursor.index < lines.length) {
+    let line = pending ?? lines[cursor.index++];
+    pending = undefined;
+    const delimiterIndex = line.indexOf(CODE_DELIMITER);
 
     if (isCode) {
-      if (!line.includes(CODE_DELIMITER)) {
+      if (delimiterIndex == -1) {
         script.push(line.trim());
       } else {
-        let [code, ...rest] = line.split(CODE_DELIMITER);
-        script.push(code.trim());
-        lines.unshift(rest.join(CODE_DELIMITER));
+        script.push(line.slice(0, delimiterIndex).trim());
+        pending = line.slice(delimiterIndex + CODE_DELIMITER.length);
         script.push(`result.push({block: blockResults.length});`);
         script.push(`blockResults.push(rv);`);
         isCode = false;
@@ -62,16 +64,16 @@ function parseSnippet(headerLine: string, lines: string[]): IHSnippetInfo {
     } else {
       if (line.startsWith('endsnippet')) {
         break;
-      } else if (!line.includes(CODE_DELIMITER)) {
+      } else if (delimiterIndex == -1) {
         script.push(`result.push("${escapeString(line)}");`);
         script.push(`result.push("\\n");`);
         placeholders += countPlaceholders(line);
       } else if (isCode == false) {
-        let [text, ...rest] = line.split(CODE_DELIMITER);
+        let text = line.slice(0, delimiterIndex);
         script.push(`result.push("${escapeString(text)}");`);
         script.push(`rv = "";`);
         placeholders += countPlaceholders(text);
-        lines.unshift(rest.join(CODE_DELIMITER));
+        pending = line.slice(delimiterIndex + CODE_DELIMITER.length);
         isCode = true;
       }
     }
@@ -90,14 +92,15 @@ function parseSnippet(headerLine: string, lines: string[]): IHSnippetInfo {
 // so we can build the approppriate HSnippet objects.
 export function parse(content: string): HSnippet[] {
   let lines = content.split(/\r?\n/);
+  const cursor = { index: 0 };
 
   let snippetInfos = [];
   let script = [];
   let isCode = false;
   let priority = 0;
 
-  while (lines.length > 0) {
-    let line = lines.shift() as string;
+  while (cursor.index < lines.length) {
+    let line = lines[cursor.index++];
 
     if (isCode) {
       if (line.startsWith('endglobal')) {
@@ -110,7 +113,7 @@ export function parse(content: string): HSnippet[] {
     } else if (line.startsWith('priority ')) {
       priority = Number(line.substring('priority '.length).trim()) || 0;
     } else if (line.match(HEADER_REGEXP)) {
-      let info = parseSnippet(line, lines);
+      let info = parseSnippet(line, lines, cursor);
       info.header.priority = priority;
       snippetInfos.push(info);
 
