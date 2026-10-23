@@ -20,12 +20,20 @@ interface AlignmentRow {
   start: number;
   source: string;
   anchors: Anchor[];
+  cells: { operators: Anchor[]; separator?: Anchor }[];
+  rowBreak?: Anchor;
+  comment?: Anchor;
   cursor: number;
   output: string;
+  width: number;
 }
 
-function displayWidth(text: string, tabSize: number, characterWidths: ReadonlyMap<string, number>) {
-  let width = 0;
+function displayWidth(
+  text: string,
+  tabSize: number,
+  characterWidths: ReadonlyMap<string, number>,
+  width = 0
+) {
   for (let char of text) {
     let code = char.codePointAt(0)!;
     if (char == '\t') {
@@ -56,16 +64,20 @@ function alignAnchors(
   characterWidths: ReadonlyMap<string, number>
 ) {
   if (!entries.length) return;
-  let prefixes = entries.map(({ row, anchor }) =>
-    row.output + row.source.slice(row.cursor, anchor.start).replace(/^[ \t]+|[ \t]+$/g, '')
+  let segments = entries.map(({ row, anchor }) =>
+    row.source.slice(row.cursor, anchor.start).replace(/^[ \t]+|[ \t]+$/g, '')
   );
-  let widths = prefixes.map((prefix) => displayWidth(prefix, tabSize, characterWidths));
+  let widths = segments.map((segment, index) =>
+    displayWidth(segment, tabSize, characterWidths, entries[index].row.width)
+  );
   let column = Math.max(...widths.map((width, index) =>
-    width + (/[ \t]$/.test(prefixes[index]) ? 0 : 1)
+    width + (/[ \t]$/.test(segments[index] || entries[index].row.output) ? 0 : 1)
   ));
   entries.forEach(({ row, anchor }, index) => {
-    row.output = prefixes[index] + ' '.repeat(Math.max(0, Math.round(column - widths[index]))) + anchor.symbol;
-    if (anchor.symbol != '\\\\' && anchor.symbol != '%') row.output += ' ';
+    let suffix = segments[index] + ' '.repeat(Math.max(0, Math.round(column - widths[index]))) + anchor.symbol;
+    if (anchor.symbol != '\\\\' && anchor.symbol != '%') suffix += ' ';
+    row.output += suffix;
+    row.width = displayWidth(suffix, tabSize, characterWidths, row.width);
     row.cursor = anchor.end;
   });
 }
@@ -187,7 +199,20 @@ export function getAlignmentEdits(
       anchors.push({ start: comment, end: comment + 1, symbol: '%', cell });
     }
     if (!skip && braces == 0 && brackets == 0 && anchors.length) {
-      rows.push({ start, source, anchors, cursor: indent.length, output: indent });
+      let cells: AlignmentRow['cells'] = [];
+      let rowBreak: Anchor | undefined;
+      let comment: Anchor | undefined;
+      for (let anchor of anchors) {
+        if (anchor.symbol == '\\\\') rowBreak = anchor;
+        else if (anchor.symbol == '%') comment = anchor;
+        else {
+          let entry = cells[anchor.cell] ||= { operators: [] };
+          if (anchor.symbol == '&') entry.separator = anchor;
+          else entry.operators.push(anchor);
+        }
+      }
+      rows.push({ start, source, anchors, cells, rowBreak, comment,
+        cursor: indent.length, output: indent, width: displayWidth(indent, tabSize, characterWidths) });
     }
     start = end + 1;
   }
@@ -197,7 +222,7 @@ export function getAlignmentEdits(
   for (let cell = 0; cell <= cellCount; cell++) {
     let groups = new Map<string, { row: AlignmentRow; operators: Anchor[] }[]>();
     for (let row of rows) {
-      let operators = row.anchors.filter((a) => a.cell == cell && /^[+=-]$/.test(a.symbol));
+      let operators = row.cells[cell]?.operators || [];
       let signature = operators.map((a) => a.symbol == '=' ? '=' : '+-').join(',');
       if (!groups.has(signature)) groups.set(signature, []);
       groups.get(signature)!.push({ row, operators });
@@ -207,15 +232,14 @@ export function getAlignmentEdits(
         alignAnchors(group.map(({ row, operators }) => ({ row, anchor: operators[index] })), tabSize, characterWidths);
       }
     }
-    alignAnchors(rows.flatMap((row) => row.anchors
-      .filter((a) => a.cell == cell && a.symbol == '&')
-      .map((anchor) => ({ row, anchor }))), tabSize, characterWidths);
+    alignAnchors(rows.flatMap((row) => {
+      let anchor = row.cells[cell]?.separator;
+      return anchor ? [{ row, anchor }] : [];
+    }), tabSize, characterWidths);
   }
-  alignAnchors(rows.flatMap((row) => row.anchors
-    .filter((a) => a.symbol == '\\\\')
-    .map((anchor) => ({ row, anchor }))), tabSize, characterWidths);
-  alignAnchors(rows.flatMap((row) => row.anchors
-    .filter((a) => a.symbol == '%')
-    .map((anchor) => ({ row, anchor }))), tabSize, characterWidths);
+  alignAnchors(rows.flatMap((row) => row.rowBreak ? [{ row, anchor: row.rowBreak }] : []),
+    tabSize, characterWidths);
+  alignAnchors(rows.flatMap((row) => row.comment ? [{ row, anchor: row.comment }] : []),
+    tabSize, characterWidths);
   return rows.flatMap(whitespaceEdits);
 }

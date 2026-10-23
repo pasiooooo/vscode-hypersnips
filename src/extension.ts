@@ -15,6 +15,7 @@ import {
     getSmartEnterPlan,
     getSmartEnterRecoveryPlan,
     shouldInsertAlignmentSeparator,
+    ALIGNMENT_SEPARATOR_ENVIRONMENTS,
     LatexContextOptions,
     TextEdit,
 } from './latexEdit';
@@ -217,10 +218,24 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
         let snapshot = getDocumentState(editor.document);
         let text = snapshot.text;
         let options = getLatexContextOptions();
-        if (!offsets.some((offset) => {
-            let context = getLatexContext(text, offset, options, snapshot);
-            return context.canSmartTab || (context.inComment && context.environmentStack.length > 0);
-        })) return;
+        let alignmentEnvironments = new Set([
+            ...ALIGNMENT_SEPARATOR_ENVIRONMENTS,
+            ...(options.extraAlignmentEnvironments || []),
+        ]);
+        let environments = new Map<string, { offset: number; beginEnd: number; endStart: number }>();
+        for (let offset of offsets) {
+            let context = snapshot.contextAt(offset);
+            if (context.inMarkdownCode || context.inTextLikeCommand || context.inVerbatimLikeEnvironment) continue;
+            if (!context.canSmartTab && !(context.inComment && context.environmentStack.length > 0)) continue;
+            let pair = snapshot.environmentPairAt(offset);
+            if (pair && alignmentEnvironments.has(pair.name)) {
+                environments.set(`${pair.beginStart}:${pair.endEnd}`,
+                    { offset, beginEnd: pair.beginEnd, endStart: pair.endStart });
+            }
+        }
+        if (!environments.size) return;
+        let requestIsCurrent = () => vscode.window.activeTextEditor == editor &&
+            editor.document.version == version && isAutoAlignEnabled(editor.document);
         let font = vscode.workspace.getConfiguration('editor', {
             uri: editor.document.uri, languageId: editor.document.languageId,
         });
@@ -229,12 +244,12 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
             size: font.get<number>('fontSize', 14),
             weight: font.get<string>('fontWeight', 'normal'),
             letterSpacing: font.get<number>('letterSpacing', 0),
-        }, text);
-        if (vscode.window.activeTextEditor != editor || editor.document.version != version ||
-            !isAutoAlignEnabled(editor.document)) return;
+        }, [...environments.values()].map(({ beginEnd, endStart }) => text.slice(beginEnd, endStart)).join(''),
+        requestIsCurrent);
+        if (!requestIsCurrent()) return;
         let tabSize = typeof editor.options.tabSize == 'number' ? editor.options.tabSize : 4;
         let edits = new Map<number, TextEdit>();
-        for (let offset of offsets) {
+        for (let { offset } of environments.values()) {
             for (let edit of getAlignmentEdits(text, offset, options, tabSize, characterWidths, snapshot)) {
                 edits.set(edit.start, edit);
             }

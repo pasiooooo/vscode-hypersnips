@@ -8,9 +8,26 @@ export interface EditorFont {
   letterSpacing: number;
 }
 
-let cachedFont = '';
-let widths = new Map<string, number>();
-let pending: Promise<void> = Promise.resolve();
+interface FontCacheEntry {
+  font: EditorFont;
+  widths: Map<string, number>;
+}
+
+interface MeasurementWaiter {
+  characters: string[];
+  isCurrent: () => boolean;
+  resolve: (widths: Map<string, number>) => void;
+}
+
+interface MeasurementTask {
+  entry: FontCacheEntry;
+  waiters: MeasurementWaiter[];
+}
+
+const fontCache = new Map<string, FontCacheEntry>();
+const measurementQueue: MeasurementTask[] = [];
+let measurementRunning = false;
+let measurementScheduled = false;
 
 // The script is constant; font settings and characters travel as JSON on stdin.
 const measureScript = String.raw`
@@ -51,44 +68,86 @@ try {
 }
 `;
 
-export async function getFontCharacterWidths(font: EditorFont, text: string) {
-  // shortcut: local Windows font metrics; other hosts retain Unicode column widths.
-  if (process.platform != 'win32') return new Map<string, number>();
-  let key = JSON.stringify(font);
-  if (key != cachedFont) {
-    cachedFont = key;
-    widths = new Map();
+function availableWidths(entry: FontCacheEntry) {
+  return new Map([...entry.widths].filter(([, width]) => width > 0));
+}
+
+async function measure(entry: FontCacheEntry, characters: string[]) {
+  try {
+    let measured = await new Promise<Record<string, number>>((resolve, reject) => {
+      let executable = path.join(process.env.SystemRoot || 'C:\\Windows',
+        'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+      let child = execFile(executable, ['-NoProfile', '-NonInteractive', '-EncodedCommand',
+        Buffer.from(measureScript, 'utf16le').toString('base64')],
+      { windowsHide: true, timeout: 5000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+        if (error) { reject(error); return; }
+        try { resolve(JSON.parse(stdout)); } catch (error) { reject(error); }
+      });
+      child.stdin!.on('error', reject);
+      child.stdin!.end(JSON.stringify({ font: entry.font, characters }));
+    });
+    for (let char of characters) {
+      let width = measured[char];
+      if (!Number.isFinite(width) || width <= 0) throw new Error('Invalid font width');
+      // Remove measurement noise for fonts whose glyphs are exact multiples of a space.
+      entry.widths.set(char, Math.abs(width - Math.round(width)) < 0.01 ? Math.round(width) : width);
+    }
+  } catch {
+    // Avoid repeatedly spawning a blocked or unavailable font service while typing.
+    for (let char of characters) entry.widths.set(char, 0);
   }
-  let fontWidths = widths;
+}
+
+function isCurrent(waiter: MeasurementWaiter) {
+  try { return waiter.isCurrent(); } catch { return false; }
+}
+
+async function runMeasurements() {
+  if (measurementRunning) return;
+  measurementScheduled = false;
+  measurementRunning = true;
+  try {
+    while (measurementQueue.length) {
+      let task = measurementQueue.shift()!;
+      let current = task.waiters.filter(isCurrent);
+      let characters = [...new Set(current.flatMap((waiter) => waiter.characters))]
+        .filter((char) => !task.entry.widths.has(char));
+      if (current.length && characters.length) await measure(task.entry, characters);
+      for (let waiter of task.waiters) waiter.resolve(availableWidths(task.entry));
+    }
+  } finally {
+    measurementRunning = false;
+  }
+}
+
+export function getFontCharacterWidths(font: EditorFont, text: string, isRequestCurrent = () => true) {
+  // shortcut: local Windows font metrics; other hosts retain Unicode column widths.
+  if (process.platform != 'win32') return Promise.resolve(new Map<string, number>());
+  let key = JSON.stringify(font);
+  let entry = fontCache.get(key);
+  if (entry) {
+    fontCache.delete(key);
+    fontCache.set(key, entry);
+  } else {
+    entry = { font: { ...font }, widths: new Map() };
+    fontCache.set(key, entry);
+    if (fontCache.size > 4) fontCache.delete(fontCache.keys().next().value!);
+  }
   let characters = [...new Set(' ' + text + Array.from({ length: 94 }, (_, i) => String.fromCharCode(i + 33)).join(''))]
     .filter((char) => !/[\p{Mark}\p{Control}]/u.test(char));
-  pending = pending.then(async () => {
-    let missing = characters.filter((char) => !fontWidths.has(char));
-    if (!missing.length) return;
-    try {
-      let measured = await new Promise<Record<string, number>>((resolve, reject) => {
-        let executable = path.join(process.env.SystemRoot || 'C:\\Windows',
-          'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-        let child = execFile(executable, ['-NoProfile', '-NonInteractive', '-EncodedCommand',
-          Buffer.from(measureScript, 'utf16le').toString('base64')],
-        { windowsHide: true, timeout: 5000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-          if (error) { reject(error); return; }
-          try { resolve(JSON.parse(stdout)); } catch (error) { reject(error); }
-        });
-        child.stdin!.on('error', reject);
-        child.stdin!.end(JSON.stringify({ font, characters: missing }));
-      });
-      for (let char of missing) {
-        let width = measured[char];
-        if (!Number.isFinite(width) || width <= 0) throw new Error('Invalid font width');
-        // Remove measurement noise for fonts whose glyphs are exact multiples of a space.
-        fontWidths.set(char, Math.abs(width - Math.round(width)) < 0.01 ? Math.round(width) : width);
-      }
-    } catch {
-      // Avoid repeatedly spawning a blocked or unavailable font service while typing.
-      for (let char of missing) fontWidths.set(char, 0);
-    }
+  if (!characters.some((char) => !entry.widths.has(char))) return Promise.resolve(availableWidths(entry));
+
+  let task = measurementQueue.find((queued) => queued.entry == entry);
+  if (!task) {
+    task = { entry, waiters: [] };
+    measurementQueue.push(task);
+  }
+  let result = new Promise<Map<string, number>>((resolve) => {
+    task!.waiters.push({ characters, isCurrent: isRequestCurrent, resolve });
   });
-  await pending;
-  return new Map([...fontWidths].filter(([, width]) => width > 0));
+  if (!measurementScheduled && !measurementRunning) {
+    measurementScheduled = true;
+    queueMicrotask(runMeasurements);
+  }
+  return result;
 }
