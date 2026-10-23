@@ -81,6 +81,9 @@ const snippets = Array.from({ length: 1000 }, (_, i) => snippet('synthetic' + i 
 current.reset();
 assert.strictEqual(current.getAutomaticCompletion(document, position, snippets), undefined);
 assert.ok(current.checks() <= snippets.length, 'automatic misses must not compute unused trigger prefixes');
+current.reset();
+assert.deepStrictEqual(normalize(current.getCompletions(document, position, snippets)), []);
+assert.ok(current.checks() <= snippets.length * 2, 'manual prefixes longer than the context cannot match');
 console.log('Completion/reference parity and bounded automatic prefix work passed.');
 
 if (process.argv.includes('--benchmark')) {
@@ -88,18 +91,20 @@ if (process.argv.includes('--benchmark')) {
   const optimized = load('../src/completion.js', false);
   for (const count of [1000, 10000]) {
     const candidates = Array.from({ length: count }, (_, i) => snippet('synthetic' + i + '_suffix', 'iA'));
-    for (const [name, api] of [['baseline', original], ['current', optimized]] as const) {
-      const run = () => api.getAutomaticCompletion(document, position, candidates);
-      for (let i = 0; i < 10; i++) run();
-      const samples = [];
-      for (let i = 0; i < 200; i++) {
-        const start = performance.now();
-        run();
-        samples.push(performance.now() - start);
+    for (const method of ['getAutomaticCompletion', 'getCompletions']) {
+      for (const [name, api] of [['baseline', original], ['current', optimized]] as const) {
+        const run = () => api[method](document, position, candidates);
+        for (let i = 0; i < 10; i++) run();
+        const samples = [];
+        for (let i = 0; i < 200; i++) {
+          const start = performance.now();
+          run();
+          samples.push(performance.now() - start);
+        }
+        samples.sort((a, b) => a - b);
+        console.log(JSON.stringify({ name, method, count, samples: samples.length,
+          medianMs: samples[100], p95Ms: samples[189] }));
       }
-      samples.sort((a, b) => a - b);
-      console.log(JSON.stringify({ name, count, samples: samples.length,
-        medianMs: samples[100], p95Ms: samples[189] }));
     }
   }
 }

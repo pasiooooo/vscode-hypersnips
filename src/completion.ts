@@ -33,6 +33,7 @@ export class CompletionInfo {
 }
 
 function matchSuffixPrefix(context: string, trigger: string) {
+  if (trigger.length > context.length) trigger = trigger.substring(0, context.length);
   while (trigger.length) {
     if (context.endsWith(trigger)) return trigger;
     trigger = trigger.substring(0, trigger.length - 1);
