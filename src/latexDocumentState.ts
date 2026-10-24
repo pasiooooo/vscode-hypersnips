@@ -32,9 +32,13 @@ const EMPTY: ParseState = { environments: [], delimiters: [], depth: 0, textDept
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function parseBlock(raw: string, command: RegExp, sanitized = sanitizeLatexForParsing(raw)): Block {
+  // Detach slices so reused blocks cannot retain entire older document strings.
+  raw = (' ' + raw).slice(1);
+  sanitized = sanitized == raw ? raw : (' ' + sanitized).slice(1);
   const block: Block = { raw, sanitized, environments: [], delimiters: [], braces: [] };
   for (const match of sanitized.matchAll(/\\(begin|end)\s*\{([^}]+)\}/g)) {
-    const name = match[2].trim();
+    // Cached contexts keep names after their temporary parsing prefix is discarded.
+    const name = (' ' + match[2].trim()).slice(1);
     const leading = match[2].search(/\S/);
     const nameStart = match.index! + match[0].indexOf('{') + 1 + Math.max(0, leading);
     block.environments.push({ kind: match[1], name, start: match.index!, end: match.index! + match[0].length,
@@ -191,6 +195,9 @@ export class LatexDocumentState implements LatexDocumentSnapshot {
 
   constructor(readonly text: string, readonly version = 1, options: LatexContextOptions = {},
     previous?: LatexDocumentState, changes: readonly SingleTextChange[] = []) {
+    // Small snapshots must not retain a deleted document's larger backing string.
+    text = (' ' + text).slice(1);
+    this.text = text;
     this.options = JSON.parse(JSON.stringify(options));
     for (const value of Object.values(this.options)) Object.freeze(value);
     Object.freeze(this.options);
