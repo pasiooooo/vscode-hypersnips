@@ -89,19 +89,28 @@ function whitespaceEdits(row: AlignmentRow): TextEdit[] {
   }
   let formatted = row.output + suffix;
   let edits: TextEdit[] = [];
-  let before = 0;
-  let after = 0;
-  while (before < row.source.length || after < formatted.length) {
-    let start = before;
-    let replacementStart = after;
-    while (/[ \t]/.test(row.source[before] || '\n')) before++;
-    while (/[ \t]/.test(formatted[after] || '\n')) after++;
-    let replacement = formatted.slice(replacementStart, after);
-    if (row.source.slice(start, before) != replacement) {
-      edits.push({ start: row.start + start, end: row.start + before, text: replacement });
+  const sourceRuns = /[ \t]+/g;
+  const formattedRuns = /[ \t]+/g;
+  let sourceRun = sourceRuns.exec(row.source);
+  let formattedRun = formattedRuns.exec(formatted);
+  let sourceWhitespace = 0, formattedWhitespace = 0;
+  while (sourceRun || formattedRun) {
+    // Removing horizontal whitespace gives matching runs the same content offset.
+    const sourceKey = sourceRun ? sourceRun.index - sourceWhitespace : Infinity;
+    const formattedKey = formattedRun ? formattedRun.index - formattedWhitespace : Infinity;
+    const key = Math.min(sourceKey, formattedKey);
+    const start = key + sourceWhitespace;
+    const before = sourceKey == key ? sourceRun![0] : '';
+    const after = formattedKey == key ? formattedRun![0] : '';
+    if (before != after) edits.push({ start: row.start + start, end: row.start + start + before.length, text: after });
+    if (sourceKey == key) {
+      sourceWhitespace += before.length;
+      sourceRun = sourceRuns.exec(row.source);
     }
-    before++;
-    after++;
+    if (formattedKey == key) {
+      formattedWhitespace += after.length;
+      formattedRun = formattedRuns.exec(formatted);
+    }
   }
   return edits;
 }

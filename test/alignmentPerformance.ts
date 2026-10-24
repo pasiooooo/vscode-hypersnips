@@ -88,6 +88,19 @@ assert.strictEqual(cellWidths.reads, 1001, 'measured cell content should not be 
 assert.deepStrictEqual(cellEdits, reference.getAlignmentEdits(longCell, longCell.indexOf('x'), {}, 4,
   new Map(cellWidths)), 'continuing from the measured width preserves fractional padding');
 
+let whitespaceChecks = 0;
+const regexTest = RegExp.prototype.test;
+RegExp.prototype.test = function(value: string) {
+  if (this.source == '[ \\t]') whitespaceChecks++;
+  return regexTest.call(this, value);
+};
+try {
+  assert.deepStrictEqual(getAlignmentEdits(longCell, longCell.indexOf('x'), {}, 4, new Map(cellWidths)), cellEdits);
+} finally {
+  RegExp.prototype.test = regexTest;
+}
+assert.strictEqual(whitespaceChecks, 0, 'whitespace edits should scan runs instead of testing every code unit');
+
 console.log('alignment differential fixtures and linear width accumulation passed');
 
 async function testAffectedEnvironments() {
