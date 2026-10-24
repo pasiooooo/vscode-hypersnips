@@ -202,6 +202,7 @@ function maskRange(chars: string[], start: number, end: number) {
 
 function getMarkdownFenceRanges(text: string) {
   let ranges: SourceRange[] = [];
+  if (!text.includes('```') && !text.includes('~~~')) return ranges;
   let open: { start: number; marker: string; length: number } | undefined;
   let lineStart = 0;
 
