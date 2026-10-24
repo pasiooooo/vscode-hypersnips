@@ -79,7 +79,7 @@ async function measure(entry: FontCacheEntry, characters: string[]) {
         'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
       let child = execFile(executable, ['-NoProfile', '-NonInteractive', '-EncodedCommand',
         Buffer.from(measureScript, 'utf16le').toString('base64')],
-      { windowsHide: true, timeout: 5000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+      { windowsHide: true, timeout: 15000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
         if (error) { reject(error); return; }
         try { resolve(JSON.parse(stdout)); } catch (error) { reject(error); }
       });

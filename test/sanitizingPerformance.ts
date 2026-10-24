@@ -24,28 +24,46 @@ for (const text of fixtures) {
   }
 }
 const plain = 'Example text with $x + y$ and \\alpha.\n'.repeat(30000);
+const commented = 'Example \\% visible % hidden\r\nnext \\\\% hidden\r'.repeat(24000);
+let seed = 563983;
+const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+const fragments = ['example', '% comment', '\\%', '\\\\%', '\\\\\\%', '\r', '\n', '\r\n',
+  '`code%`', '<!--%-->', '~~~', '```', '\u793a\u4f8b', '\u0301', '\ud83d\ude00', '\\text{x}', '$x$'];
+for (let fixture = 0; fixture < 150; fixture++) {
+  const text = Array.from({ length: 12 }, () => fragments[Math.floor(random() * fragments.length)]).join('');
+  for (let offset = 0; offset <= text.length; offset++) {
+    const prefix = text.slice(0, offset);
+    assert.strictEqual(current(prefix), baseline(prefix), 'seeded prefix sanitization parity');
+  }
+}
 let copies = 0;
 const split = String.prototype.split;
 String.prototype.split = function(separator: any, limit?: number): string[] {
   if (separator === '') copies++;
   return split.call(this, separator, limit);
 };
-try { assert.strictEqual(current(plain), plain); }
+try {
+  assert.strictEqual(current(plain), plain);
+  assert.strictEqual(current(commented), baseline(commented));
+}
 finally { String.prototype.split = split; }
-assert.strictEqual(copies, 0, 'unmasked text should not be copied into character arrays');
+// The reference invocation above accounts for one copy.
+assert.strictEqual(copies, 1, 'plain and comment-only text should avoid character arrays');
 console.log('Sanitization/reference parity, explicit masks and plain-text allocation checks passed.');
 
 if (process.argv.includes('--benchmark')) {
+ for (const [fixture, text] of [['plain', plain], ['commented', commented]]) {
   for (const [name, fn] of [['baseline', baseline], ['current', current]] as const) {
-    for (let i = 0; i < 10; i++) fn(plain);
+    for (let i = 0; i < 10; i++) fn(text);
     const samples = [];
     for (let i = 0; i < 200; i++) {
       const start = performance.now();
-      fn(plain);
+      fn(text);
       samples.push(performance.now() - start);
     }
     samples.sort((a, b) => a - b);
-    console.log(JSON.stringify({ name, chars: plain.length, samples: samples.length,
+    console.log(JSON.stringify({ name, fixture, chars: text.length, samples: samples.length,
       medianMs: samples[100], p95Ms: samples[189] }));
   }
+ }
 }

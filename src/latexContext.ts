@@ -244,9 +244,13 @@ export function sanitizeLatexForParsing(
   text: string,
   markdownFenceRanges = getMarkdownFenceRanges(text)
 ) {
-  if (!markdownFenceRanges.length && !text.includes('%') &&
-    !text.includes('`') && !text.includes('<!--')) {
-    return text;
+  if (!markdownFenceRanges.length && !text.includes('`') && !text.includes('<!--')) {
+    if (!text.includes('%')) return text;
+    return text.replace(/[^\n]+/g, (line) => {
+      const comment = findLatexCommentStart(line);
+      return comment == -1 ? line : line.slice(0, comment) +
+        line.slice(comment).replace(/[^\r]/g, ' ');
+    });
   }
   let chars = text.split('');
 

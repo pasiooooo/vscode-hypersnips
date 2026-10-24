@@ -26,6 +26,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Diagnose native font measurement
+        if: failure() && runner.os == 'Windows'
+        run: node scripts/diagnose-fonts.cjs
       - name: Extension host tests (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a npm run test:integration
