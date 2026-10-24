@@ -122,3 +122,46 @@ try {
   contextModule.sanitizeLatexForParsing = sanitize;
 }
 console.log('complete-block sanitization reuse and incomplete-tail parity passed');
+
+const gapSource = Array.from({ length: 200 }, (_, index) => `row ${index} $x$\n`).join('');
+const gapState = new LatexDocumentState(gapSource);
+const distant = gapState.update([
+  { rangeOffset: 0, rangeLength: 0, text: 'q' },
+  { rangeOffset: gapSource.lastIndexOf('row'), rangeLength: 0, text: 'q' },
+]);
+assert.strictEqual(distant.parsedBlocks, 2, 'distant edits must not reparse the untouched gap');
+assert.strictEqual(distant.reusedBlocks, 198);
+check(distant, [0, 1, distant.text.indexOf('$'), Math.floor(distant.text.length / 2), distant.text.length]);
+const alternating = gapState.update(Array.from({ length: 100 }, (_, index) => ({
+  rangeOffset: gapSource.indexOf(`row ${index * 2} `), rangeLength: 0, text: 'q',
+})).reverse());
+assert.strictEqual(alternating.parsedBlocks, 100);
+assert.strictEqual(alternating.reusedBlocks, 100);
+check(alternating, [0, Math.floor(alternating.text.length / 2), alternating.text.length]);
+
+const tied = new LatexDocumentState('abcdef');
+assert.strictEqual(tied.update([
+  { rangeOffset: 2, rangeLength: 0, text: 'A' }, { rangeOffset: 2, rangeLength: 0, text: 'B' },
+]).text, 'abBAcdef', 'same-offset insertions retain their original ordering');
+assert.strictEqual(tied.update([
+  { rangeOffset: 2, rangeLength: 2, text: 'X' }, { rangeOffset: 2, rangeLength: 0, text: 'Y' },
+]).text, 'abYXef');
+assert.throws(() => tied.update([
+  { rangeOffset: 2, rangeLength: 0, text: 'Y' }, { rangeOffset: 2, rangeLength: 2, text: 'X' },
+]), /Invalid or overlapping document changes/);
+
+for (const marker of ['~~~\n', '<!--']) {
+  const before = new LatexDocumentState('first\nmiddle\nlast\n');
+  check(before.update([
+    { rangeOffset: 0, rangeLength: 0, text: marker },
+    { rangeOffset: before.text.indexOf('last'), rangeLength: 0, text: marker == '<!--' ? '-->' : marker },
+  ]));
+}
+for (const text of ['\\text\n{alpha}\nrest\nlast\n', '\\begin{align}\nalpha\n\\end{align}\ntail\n', 'x\r\nmiddle\r\nlast\r\n']) {
+  const before = new LatexDocumentState(text);
+  check(before.update([
+    { rangeOffset: 1, rangeLength: 1, text: '\n' },
+    { rangeOffset: text.length, rangeLength: 0, text: 'q' },
+  ]));
+}
+console.log('multi-change gap reuse, stable insertion ordering and structural boundary parity passed');

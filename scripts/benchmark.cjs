@@ -15,11 +15,12 @@ const currentEnvironment = require(path.join(built, 'src/environmentConvert'));
 const currentAlignment = require(path.join(built, 'src/latexAlignment'));
 const currentParser = require(path.join(built, 'src/parser'));
 const { LatexDocumentState } = require(path.join(built, 'src/latexDocumentState'));
+const PreviousDocumentState = require(path.join(built, 'test/reference/documentState453')).LatexDocumentState;
 const samples = 200;
 const report = {
   environment: { date: new Date().toISOString(), node: process.version, cpu: os.cpus()[0].model, platform: process.platform },
   samples, measurements: [], gates: [],
-  method: 'Synthetic input; 10 warmups, 200 measurements. Same process/runtime. Function timings exclude editor IPC/rendering, 150ms debounce, native font processes and other extensions.',
+  method: 'Synthetic input; 10 warmups, 200 measurements. Same process/runtime. Batch groups compare frozen 4536c43 state algorithms sharing parsing helpers; other baselines are d851872. Function timings exclude editor IPC/rendering, 150ms debounce, native font processes and other extensions.',
 };
 function timed(name, fn, details = {}) {
   for (let i = 0; i < 10; i++) fn();
@@ -76,6 +77,27 @@ for (const [position, offset] of [['start', 7], ['middle', Math.floor(large.offs
     const updated = state.update([{ rangeOffset: offset, rangeLength: 0, text: 'q' }]);
     updated.contextAt(offset + 1);
   }, {position});
+}
+for (const count of [2, 100]) {
+  const changes = Array.from({length: count}, (_, index) => ({
+    rangeOffset: Math.floor(index * (large.text.length - 1) / (count - 1)), rangeLength: 0, text: 'q',
+  }));
+  const previous = new PreviousDocumentState(large.text);
+  const current = new LatexDocumentState(large.text);
+  const expected = previous.update(changes), actual = current.update(changes);
+  assert.equal(actual.text, expected.text);
+  assert.deepEqual(actual.contextAt(actual.text.length - 1), expected.contextAt(expected.text.length - 1));
+  timed('batch edit 4536c43 baseline', () => {
+    const updated = previous.update(changes);
+    updated.contextAt(updated.text.length - 1);
+  }, {count});
+  let lastBatch;
+  timed('batch edit current', () => {
+    lastBatch = current.update(changes);
+    lastBatch.contextAt(lastBatch.text.length - 1);
+  }, {count});
+  assert.equal(lastBatch.parsedBlocks, count, 'each ordinary changed block is parsed once');
+  report.measurements.push({name: 'batch reuse', count, parsedBlocks: lastBatch.parsedBlocks, reusedBlocks: lastBatch.reusedBlocks});
 }
 timed('cold 1 MiB parse', () => new LatexDocumentState(large.text));
 const structural = new LatexDocumentState(large.text);

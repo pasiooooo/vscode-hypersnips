@@ -210,44 +210,58 @@ export class LatexDocumentState implements LatexDocumentSnapshot {
     let state = EMPTY;
     let reused = 0;
     let parsed = 0;
-    let suffixIndex = -1;
-    let suffixStart = -1;
+    const gaps: { index: number; end: number; delta: number }[] = [];
+    let gapIndex = 0;
     if (previous && previous.optionsKey == this.optionsKey && version == previous.version + 1 && changes.length) {
       const sorted = changes.slice().sort((a, b) => a.rangeOffset - b.rangeOffset);
-      const first = previous.indexAt(sorted[0].rangeOffset);
-      const last = sorted[sorted.length - 1];
-      const lastIndex = previous.indexAt(last.rangeOffset + last.rangeLength);
+      const dirty: { first: number; last: number; delta: number }[] = [];
+      for (const change of sorted) {
+        const first = previous.indexAt(change.rangeOffset);
+        const last = previous.indexAt(change.rangeOffset + change.rangeLength);
+        const delta = change.text.length - change.rangeLength;
+        const prior = dirty[dirty.length - 1];
+        if (prior && first <= prior.last + 1) {
+          prior.last = Math.max(prior.last, last);
+          prior.delta += delta;
+        } else dirty.push({ first, last, delta });
+      }
+      const first = dirty[0].first;
       checkpoints = previous.checkpoints.slice(0, first);
       reused = checkpoints.length;
       start = previous.starts[first] || 0;
       state = checkpoints.length ? checkpoints[checkpoints.length - 1].after : EMPTY;
-      suffixIndex = lastIndex + 1;
-      suffixStart = (previous.starts[suffixIndex] ?? previous.text.length) + sorted.reduce((delta, change) =>
-        delta + change.text.length - change.rangeLength, 0);
+      let delta = 0;
+      for (let index = 0; index < dirty.length; index++) {
+        delta += dirty[index].delta;
+        const first = dirty[index].last + 1;
+        const end = dirty[index + 1]?.first ?? previous.checkpoints.length;
+        if (first < end) gaps.push({ index: first, end, delta });
+      }
     }
     while (start < text.length) {
-      if (previous && suffixIndex >= 0 && start >= suffixStart) {
-        while (suffixIndex < previous.checkpoints.length && suffixStart < start) {
-          suffixStart += previous.checkpoints[suffixIndex++].block.raw.length;
-        }
-        if (suffixStart == start && suffixIndex < previous.checkpoints.length) {
-          const old = previous.checkpoints[suffixIndex];
-          if (sameState(state, old.before)) {
-            const suffix = previous.checkpoints.slice(suffixIndex);
-            checkpoints.push(...suffix);
-            reused += suffix.length;
-            start = text.length;
-            break;
-          }
+      let gap = gaps[gapIndex];
+      while (previous && gap) {
+        while (gap.index < gap.end && previous.starts[gap.index] + gap.delta < start) gap.index++;
+        if (gap.index < gap.end) break;
+        gap = gaps[++gapIndex];
+      }
+      if (previous && gap && previous.starts[gap.index] + gap.delta == start) {
+        const old = previous.checkpoints[gap.index];
+        if (sameState(state, old.before)) {
+          for (let index = gap.index; index < gap.end; index++) checkpoints.push(previous.checkpoints[index]);
+          reused += gap.end - gap.index;
+          state = previous.checkpoints[gap.end - 1].after;
+          start = (previous.starts[gap.end] ?? previous.text.length) + gap.delta;
+          gap.index = gap.end;
+        } else {
           const after = advance(state, old.block, this.resolved.verbatimLikeEnvironments);
           checkpoints.push({ block: old.block, before: state, after });
           state = after;
           start += old.block.raw.length;
-          suffixStart = start;
-          suffixIndex++;
+          gap.index++;
           reused++;
-          continue;
         }
+        continue;
       }
       const { end, sanitized } = nextBlockEnd(text, start, this.pending);
       const block = parseBlock(text.slice(start, end), this.command, sanitized);
@@ -274,17 +288,18 @@ export class LatexDocumentState implements LatexDocumentSnapshot {
 
   update(changes: readonly SingleTextChange[], version = this.version + 1, options = this.options): LatexDocumentState {
     const sorted = changes.slice().sort((a, b) => b.rangeOffset - a.rangeOffset);
-    let text = this.text;
-    let limit = text.length;
+    const parts: string[] = [];
+    let limit = this.text.length;
     for (const change of sorted) {
       if (!Number.isInteger(change.rangeOffset) || !Number.isInteger(change.rangeLength) ||
         change.rangeOffset < 0 || change.rangeLength < 0 || change.rangeOffset + change.rangeLength > limit) {
         throw new RangeError('Invalid or overlapping document changes');
       }
-      text = text.slice(0, change.rangeOffset) + change.text + text.slice(change.rangeOffset + change.rangeLength);
+      parts.push(this.text.slice(change.rangeOffset + change.rangeLength, limit), change.text);
       limit = change.rangeOffset;
     }
-    return new LatexDocumentState(text, version, options, this, changes);
+    parts.push(this.text.slice(0, limit));
+    return new LatexDocumentState(parts.reverse().join(''), version, options, this, changes);
   }
 
   private indexAt(offset: number) {
