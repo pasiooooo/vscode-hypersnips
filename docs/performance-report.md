@@ -71,3 +71,7 @@ A read-only CPU profile attributes the largest cold-parse share to sanitization.
 ## Latest validation
 
 Commit 4a12df8 adds a comment-aware sanitization fast path, retains the existing masking path for Markdown/HTML/backtick input, raises the native Windows measurement timeout to 15 seconds, and adds failure-only CI diagnostics. The remote run for commit 4a12df8 passed both Linux and Windows checks, extension-host suites, and preview packaging; only the release job was skipped because this is not a tag. The latest local VSIX is dist/performance/vscode-hypersnips-0.1.4-perf.4a12df8.vsix (SHA256 C2332B620D9B3F4A7FD4FE8C2A773FEF6E2C2EF8DE9656DAA6BA9C644B69117E).
+
+## Latest core benchmark (4a12df8 source)
+
+The final local run used 10 warmups and 200 samples per case on the same Windows machine. All three gates passed again. The 1 MiB typing baseline/current medians were 61.8044 / 0.7143 ms (current P95 1.3282 ms, 98.8% reduction). Wide alignment was 116.5894 / 9.9803 ms (91.4% reduction). Cold 1 MiB parse was 29.0068 ms median / 34.1484 ms P95, down from the pre-comment-fast-path 126.3343 / 204.2661 ms measurement. Structural fence insertion was 17.0945 / 19.8434 ms. The complete machine-readable output is docs/performance-results-4a12df8.json.

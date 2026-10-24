@@ -1,0 +1,196 @@
+{
+  "environment": {
+    "date": "2026-10-24T05:10:28.501Z",
+    "node": "v25.8.1",
+    "cpu": "Intel(R) Core(TM) i7-14700KF",
+    "platform": "win32"
+  },
+  "samples": 200,
+  "measurements": [
+    {
+      "name": "typing baseline",
+      "kib": 10,
+      "medianMs": 0.6054,
+      "p95Ms": 0.6403,
+      "maxMs": 0.7237
+    },
+    {
+      "name": "typing incremental",
+      "kib": 10,
+      "medianMs": 0.0224,
+      "p95Ms": 0.0557,
+      "maxMs": 0.2533
+    },
+    {
+      "name": "reuse",
+      "kib": 10,
+      "parsedBlocks": 1,
+      "reusedBlocks": 154
+    },
+    {
+      "name": "typing baseline",
+      "kib": 100,
+      "medianMs": 5.9939,
+      "p95Ms": 7.3093,
+      "maxMs": 11.3387
+    },
+    {
+      "name": "typing incremental",
+      "kib": 100,
+      "medianMs": 0.064,
+      "p95Ms": 0.077,
+      "maxMs": 0.4523
+    },
+    {
+      "name": "reuse",
+      "kib": 100,
+      "parsedBlocks": 1,
+      "reusedBlocks": 1434
+    },
+    {
+      "name": "typing baseline",
+      "kib": 500,
+      "medianMs": 30.175,
+      "p95Ms": 36.9759,
+      "maxMs": 54.8936
+    },
+    {
+      "name": "typing incremental",
+      "kib": 500,
+      "medianMs": 0.3713,
+      "p95Ms": 0.4591,
+      "maxMs": 3.3092
+    },
+    {
+      "name": "reuse",
+      "kib": 500,
+      "parsedBlocks": 1,
+      "reusedBlocks": 7123
+    },
+    {
+      "name": "typing baseline",
+      "kib": 1024,
+      "medianMs": 61.8044,
+      "p95Ms": 78.0981,
+      "maxMs": 95.0145
+    },
+    {
+      "name": "typing incremental",
+      "kib": 1024,
+      "medianMs": 0.7143,
+      "p95Ms": 1.3282,
+      "maxMs": 9.517
+    },
+    {
+      "name": "reuse",
+      "kib": 1024,
+      "parsedBlocks": 1,
+      "reusedBlocks": 14575
+    },
+    {
+      "name": "ordinary position update",
+      "position": "start",
+      "medianMs": 0.7934,
+      "p95Ms": 1.1447,
+      "maxMs": 5.3679
+    },
+    {
+      "name": "ordinary position update",
+      "position": "middle",
+      "medianMs": 0.7587,
+      "p95Ms": 0.9817,
+      "maxMs": 7.0259
+    },
+    {
+      "name": "ordinary position update",
+      "position": "end",
+      "medianMs": 0.7475,
+      "p95Ms": 0.9071,
+      "maxMs": 6.5735
+    },
+    {
+      "name": "cold 1 MiB parse",
+      "medianMs": 29.0068,
+      "p95Ms": 34.1484,
+      "maxMs": 50.5829
+    },
+    {
+      "name": "structural fence insertion",
+      "medianMs": 17.0945,
+      "p95Ms": 19.8434,
+      "maxMs": 42.083
+    },
+    {
+      "name": "wide alignment baseline",
+      "medianMs": 116.5894,
+      "p95Ms": 131.0118,
+      "maxMs": 156.944
+    },
+    {
+      "name": "wide alignment current",
+      "medianMs": 9.9803,
+      "p95Ms": 11.8468,
+      "maxMs": 24.4634
+    },
+    {
+      "name": "snippet compile baseline",
+      "count": 1000,
+      "medianMs": 0.6658,
+      "p95Ms": 1.783,
+      "maxMs": 7.0939
+    },
+    {
+      "name": "snippet compile current",
+      "count": 1000,
+      "medianMs": 0.6002,
+      "p95Ms": 0.7957,
+      "maxMs": 1.9812
+    },
+    {
+      "name": "snippet compile baseline",
+      "count": 10000,
+      "medianMs": 649.9343,
+      "p95Ms": 1118.7301,
+      "maxMs": 1146.3027
+    },
+    {
+      "name": "snippet compile current",
+      "count": 10000,
+      "medianMs": 6.0953,
+      "p95Ms": 7.7658,
+      "maxMs": 9.3092
+    }
+  ],
+  "gates": [
+    {
+      "name": "1 MiB typing median >=70% faster",
+      "passed": true,
+      "reductionPercent": 98.8
+    },
+    {
+      "name": "1 MiB typing P95 <=10ms",
+      "passed": true,
+      "p95Ms": 1.3282
+    },
+    {
+      "name": "100x128 alignment >=50% faster",
+      "passed": true,
+      "reductionPercent": 91.4
+    }
+  ],
+  "method": "Synthetic input; 10 warmups, 200 measurements. Same process/runtime. Function timings exclude editor IPC/rendering, 150ms debounce, native font processes and other extensions.",
+  "memory": {
+    "cycles": 100,
+    "warmupCycles": 20,
+    "beforeBytes": 46485136,
+    "afterBytes": 46376184,
+    "batchHeapBytes": [
+      46453960,
+      46379048,
+      46376000,
+      46375736,
+      46376184
+    ],
+    "note": "Synthetic parse/edit/release cycles with references leaving helper scope; post-GC heap trend is not proof of absence of all leaks."
+  }
+}
