@@ -1,77 +1,65 @@
-# Performance preview report
+# 性能重构试用报告
 
-The performance work is isolated on `codex/performance-refactor`, based on `d851872`. The extension keeps version `0.1.4` and identity `pasiooooo.vscode-hypersnips`. The original checkout's Marketplace preparation is not part of this branch.
+本分支为 `codex/performance-refactor`，基于 `d851872`。插件保持版本 `0.1.4` 和标识 `pasiooooo.vscode-hypersnips`。原工作目录的插件市场准备文件未带入此分支。
 
-This is a preview for installation testing. Main has not been merged. Local automated validation does not replace the user's installation/usage confirmation. Further performance investigation remains open, particularly first-open work and large structural changes.
+当前成果用于安装试用。合并 `main` 仍以用户实际试用确认为前提；本轮不创建发布标签、不发布 GitHub Release 或插件市场版本。
 
-## Measurements
+## 测量结果与范围
 
-Windows, Intel Core i7-14700KF, Node v25.8.1. Frozen baseline and current algorithms run in the same process. Each group has 10 warmups and 200 timed samples. The core run uses algorithm sources at `67b13f6`; subsequent completion-only changes do not affect those algorithms. Completion measurements include `9090486`.
+以下完整基准对应生产源码 `ff2fe6a`。环境为 Windows、Intel Core i7-14700KF、Node v25.8.1；每组预热 10 次、测量 200 次，在同一进程比较冻结的 `d851872` 原始算法与重构实现。原始结果见 [performance-results-ff2fe6a.json](performance-results-ff2fe6a.json)。后续仅修改报告与测量记录，生产源码不变。较早的 JSON 文件仅作历史记录，不代表本表。
 
-| Synthetic operation | Baseline median / P95 ms | Current median / P95 ms | Median reduction |
+| 虚构输入上的操作 | 原实现中位数 / P95，ms | 重构中位数 / P95，ms | 中位数减少 |
 | --- | ---: | ---: | ---: |
-| 1 MiB local edit, context and name-sync gate | 132.3776 / 167.7852 | 1.4467 / 1.7984 | 98.9% |
-| 100 rows x 128 columns alignment | 225.2060 / 333.2504 | 19.6631 / 25.2409 | 91.3% |
-| Compile 10000 snippets | 116.9546 / 957.4995 | 14.0483 / 17.8571 | 88.0% |
-| Automatic matching, 10000 literal candidates | 2.1173 / 2.2710 | 0.5716 / 0.6393 | 73.0% |
-| Manual matching, 10000 literal candidates | 2.1331 / 2.2127 | 1.1203 / 1.2260 | 47.5% |
-| Sanitize 1140000 characters requiring no masks | 22.5156 / 48.7162 | 1.7036 / 2.0438 | 92.4% |
+| 1 MiB 局部编辑、上下文及名称同步预判 | 61.1917 / 72.2574 | 0.9570 / 1.7618 | 98.4% |
+| 100 行 × 128 列对齐 | 120.0338 / 142.2924 | 7.4806 / 9.2094 | 93.8% |
+| 20 行 × 32 列，含二元运算符 | 11.8254 / 12.5367 | 1.0832 / 1.8395 | 90.8% |
+| 编译 10,000 条片段 | 660.1908 / 1126.4653 | 6.1603 / 7.7939 | 99.1% |
 
-All three planned core gates pass: at least 70% lower local-edit median, local-edit P95 below 10 ms, and at least 50% lower wide-alignment median. Ordinary edits reparse one block and reuse 14575 blocks in the 1 MiB fixture.
+三个约定门槛均通过：局部编辑中位数至少降低 70%、P95 不超过 10 ms、宽表对齐中位数至少降低 50%。1 MiB 普通修改重新解析 1 个块，复用 14,575 个块。
 
-First construction still costs 126.3343 ms median / 204.2661 ms P95 in the comment-heavy 1 MiB fixture. An opening Markdown fence at the beginning costs 34.3231 / 41.3863 ms. These structural/cold cases do not have a fixed-time promise.
+首次构建 1 MiB 文档状态为 **21.2425 / 22.9269 ms**；文首插入改变后续结构的 Markdown 围栏为 **16.8740 / 18.4896 ms**。这两类允许全量或大范围重新解析，没有固定时间承诺。
 
-Timings are function execution, excluding editor IPC/rendering, the existing 150 ms alignment debounce, native font process startup and other extensions. Absolute values vary with machine load; the baseline's large compilation P95 shows that variability. Shared CI checks work counts and correctness rather than absolute milliseconds.
+上述是函数计算耗时，未包含编辑器通信、渲染、原有 150 ms 对齐防抖、原生字体进程启动或其他扩展。片段编译的原实现受 V8 和机器负载影响较大，因此不把单次绝对倍率当成日常使用的保证。共享 CI 验证正确性和实际扫描/进程次数，不以绝对毫秒数作为门槛。
 
-The final core run printed its report through a read-only adapter after automatic approval of the file-writing rerun repeatedly timed out. The adapter runs the same benchmark source and redirects only report-file writes to stdout. Its values are recorded in `performance-measurements.json`.
+## 本轮实现
 
-## What changed
+- 共享不可变文档快照保留当前与前一版本。行/块检查点按修改范围重新解析并在状态收敛后复用后续结果；前缀查询和全文清理语义分别保留。上下文、片段过滤、Enter/Tab、环境名称同步、转换及自动对齐共用这些状态。
+- 普通正文编辑先判断是否碰到环境名称；上下文键只在值变化时发送。批量修改使用同一旧版本坐标，配置变化、版本断档和无效修改走重建路径，关闭文档释放缓存。
+- 对齐按单元格组织锚点，复用已测内容宽度，按连续空白段生成相同的原文编辑；运算符检查只查看去尾空白后的末尾符号。各位置先判断资格，再按环境合并。
+- 字体请求只从受影响环境收集文档字符；保留最多四种完整字体配置，合并未启动的缺字请求，跳过过期排队任务。已缓存字符用覆盖正则检查，新增测量后失效；正则编译失败沿用原收集路径，缺字仍执行原生测量。
+- 片段解析用游标替代数组头部增删。重新加载先完整构建替换表，失败保留旧表；同一操作的重复回调合并，后续独立操作仍执行 global。管理器输入只更新内容、脏状态与按钮，接受新分析后刷新结果，保留保存冲突保护。
+- 自动片段匹配跳过不使用的部分前缀计算；手动匹配不再尝试长于当前输入的前缀。无需遮罩的文本避免字符数组复制，无三连围栏标记时跳过围栏逐行扫描。完整块复用已完成的清理，跨块或未完成尾部保留全文回退。
 
-- Shared immutable document snapshots retain current/previous versions. Line/block checkpoints reuse parser results after edits, with distinct prefix and full-document queries. Context, Enter/Tab, name synchronization, conversion and alignment use them.
-- Name synchronization gates ordinary text edits before constructing environment pairs. Context keys are sent only when their values change.
-- Alignment indexes anchors by cell and accumulates widths in their original floating-point order. Scheduler eligibility is checked before merging repeated positions by environment. Fonts collect document glyphs from affected bodies; four font configurations are cached, queued glyph requests merge and stale queued work is skipped.
-- Snippet parsing uses a cursor and a pending dynamic-code fragment. Reloading builds the whole replacement table before publishing it; failure leaves the prior table available. Duplicate callbacks from one profile change share work, while later operations still execute global code.
-- Manager typing updates content, dirty indicators and buttons. Accepted analysis refreshes results; stale range operations and saving conflicts retain their checks.
-- Automatic matching omits unused partial-prefix work. Manual suffix-prefix search skips lengths exceeding the current input. Text without masking markers avoids character-array copies.
+额外探索性对照采用轮换执行顺序、各 200 次测量：完整块清理复用使首次构建中位数从 33.8560 降到 26.5922 ms；共享围栏快速返回使无注释纯文本清理从 0.5528 降到 0.0982 ms。空白段扫描在长单元格场景从 5.8264 降到 2.5273 ms；运算符前缀检查在 100×128 二元运算符场景从 110.2814 降到 38.4498 ms。
 
-## Verification
+字体缓存覆盖检查的宽表请求从 1.4834 降到 0.0391 ms，约 1 MiB 正文从 14.3089 降到 0.3248 ms；原生进程在这项单测中是模拟的，因此只反映 JavaScript 缓存请求耗时，不代表首次字体启动或完整对齐时间。其余探索性数据及对应源码见 [performance-extra-measurements.json](performance-extra-measurements.json)。这些是对前一性能实现的单项比较，不与上表的原始基线混用。
 
-`npm run check` includes all original tests plus incremental, alignment, font scheduling, snippet loading/manager, completion and sanitization regressions.
+## 正确性证据
 
-- Incremental tests compare contexts, environment ranges, edits and carets at intermediate states, including 525 seeded edits, 100 seeded multi-edit batches, CRLF, Unicode, incomplete constructs, nested/custom environments, comments, fences and verbatim. The original incremental stage additionally passed an independent 9000-state every-offset review.
-- Exact alignment edits/caret mappings match frozen references across fractional/extreme widths, Tabs, operators, comments, nesting and empty cells. Independent alignment review added 700 seeded fixtures. Native Windows checks validate Consolas/CJK and Arial widths and idempotent alignment.
-- Font queue tests count actual mocked child launches: two same-font queued requests merge into one; stale queued work launches zero processes; four fonts are retained and an evicted fifth font is measured again. Failures and malformed results preserve fallback behavior.
-- Parser tests compare metadata, generated output and thrown errors, including dynamic delimiters and global closures. VM tests execute real reload code and manager webview JavaScript, including failed reads/global/parse, recovery, profile event timing, dirty buttons, stale analysis and hash/mtime/open-dirty conflicts.
-- Real isolated VS Code host tests cover dynamic placeholder updates, automatic math/text snippets, manual completion acceptance, environment name sync, Enter/Tab, actual intermediate undo/redo states, multicursors, comments, alignment/toggle/stale-document protection and 20 open/edit/close cycles. They await each document's closed state.
+`npm run check` 通过原有测试、增量编辑、对齐、字体调度、片段解析/加载/管理器、补全及文本清理测试，包含真实 Windows 原生字体校准。
 
-The independent whole-branch review of d851872..e0bb68e completed with no actionable regression found. It reran seven focused suites and added 10000 parser inputs, 10000 sanitization inputs, 5000 completion contexts and adversarial loader/profile probes. Tasks 1-3 pass the code review; Task 4 remains incomplete while Windows native-font CI fails. User installed-VSIX confirmation remains required before main integration.
+- 增量测试在每次编辑后比较上下文、环境范围、实际编辑与光标映射，覆盖固定种子的连续修改、多光标批量修改、中文/组合字符/Tab/CRLF、转义、注释、围栏、verbatim、跨行及未完成命令、自定义与嵌套环境、旧快照不变性和实际复用次数。
+- 对齐与冻结实现比较精确的空白编辑和光标结果，覆盖分数、极小/极大宽度、Tab、运算符组及幂等性。字体测试验证排队合并、四组缓存淘汰、过期任务不启动、返回 Map 隔离、覆盖失效、Unicode/孤立代理项与失败回退；模拟进程中同字体的两次排队请求合并为一次启动，过期排队请求启动零次，已缓存请求不再启动。
+- 片段测试比较生成内容与错误、global 作用域、动态分隔符、优先级和正则；加载/管理器 VM 测试执行实际代码，覆盖失败后保留旧表、后续恢复、profile 回调时序、过期分析和 hash/mtime/未保存编辑冲突。
+- 隔离的真实 VS Code 宿主九组测试通过：动态占位符、自动及手动片段、名称同步、Enter/Tab、多光标与注释、实际撤销/重做中间状态、对齐开关、切换文档时禁止旧任务写入，以及 20 次打开/编辑/关闭文档。
+- 分阶段及整分支独立复核未发现引入的行为回归。后续清理优化额外比较了 64,827 个逐位置状态；完整块复用额外比较了 2,600 个快照、106,734 个逐位置状态，并检查深度 100/500 的嵌套输入。空白段复核比较 20,924 对文本及 900 个实际对齐输入，882,474 个光标映射一致；运算符检查复核比较全部 1,114,112 个 Unicode 码点及 1,000 个实际对齐输入；字体覆盖复核在 1,194 次模拟请求中保持相同的 Map 和原生缺字批次。
 
-## Memory and limitations
+此前源码 `4a12df8` 的 [Windows/Linux CI](https://github.com/pasiooooo/vscode-hypersnips/actions/runs/40060067665) 已通过回归、真实宿主及打包。更早的 Windows 字体失败已被该结果取代；延长超时后 CI 通过，并不能单独证明超时就是原失败原因。本报告封存时，最终提交的远程 CI 和 VSIX 校验仍待验证；交付时另行提供对应提交的 CI 链接及安装包校验记录，不能用此前运行代替。
 
-After 20 warmup cycles and 100 construct/edit/release cycles, post-GC heap was 46856752 bytes before and 46742408 after. The five batch values were 46827824, 46751608, 46752184, 46742536 and 46742408. This shows a flat trend for this synthetic run, not proof that every leak is absent.
+## 内存及剩余成本
 
-Updates still copy text and rebuild the block-offset index. Large unfinished multiline constructs share a block; first pair/sanitized-text queries can visit the whole document. These are remaining profiling candidates, so the broader optimization goal is not declared complete.
+本次经过 20 次预热、100 次构建/编辑/释放后，GC 后堆从 46,576,984 变为 46,458,704 字节。五批结果为 46,545,664、46,461,296、46,461,296、46,459,544、46,458,704。此合成场景趋势平稳，不构成所有路径均无泄漏的证明。
 
-Font measurement remains a one-shot asynchronous Windows process. Non-Windows hosts retain Unicode-width fallback. A fixed ASCII alphabet is still warmed in addition to characters collected from affected bodies; removing that warmup requires comparing later process counts and alignment latency. Already-running processes finish normally, with stale results prevented from editing a newer document.
+文档更新仍复制文本并重建块偏移索引；很长的未完成跨行结构仍是一个块。首次环境配对查询和全文清理拼接仍可能访问全部块。现有 1 MiB 普通输入测量中，这些查询各在约 1 ms 内；尚无证据支持为其增加跨版本索引的复杂性。极端深层嵌套只做了正确性抽查，未承诺性能上限。
 
-Arbitrary user regular expressions and JavaScript retain their original execution semantics and can take unbounded time. Failure to publish a new snippet table cannot undo side effects already performed by a user's global code.
+Windows 原生字体测量仍是一次性异步进程，已运行的进程正常完成，过期结果禁止写回。其他系统沿用 Unicode 列宽回退。除环境中的字符外仍预热固定 ASCII 集合，以减少后续输入产生的新进程；本轮不引入常驻测量进程。
 
-## Installation and merge gate
+任意用户正则和 JavaScript 保持原执行语义，运行时间无法保证上限。加载失败时保留旧片段表，无法撤销用户 global 已经执行的外部副作用。本轮不更换正则引擎、不增加 Worker 或隔离 JavaScript。
 
-Follow `performance-testing.md` for installation, window reload, rollback and the manual checklist. Install the VSIX whose filename includes the commit hash; the UI version remains 0.1.4. Reinstall the original 0.1.4 VSIX to roll back, then reload the window.
+## 安装、恢复与合并条件
 
-The performance-branch CI runs Windows/Linux regression and real-host checks and creates a preview artifact. It does not create a release tag or publish to GitHub Releases/Marketplace. Remote run 39957359978: Linux regression and extension-host job passed; Windows failed the strict native font measurement assertion (space width undefined instead of 1), so remote packaging was skipped. The locally built 4a12df8 VSIX was inspected: 57 entries, correct identity/settings, incremental module present, no development directories or temporary diagnostics. This preview is not yet fully CI-accepted.
+按 [试用说明](performance-testing.md) 安装 `dist/performance/` 中带提交短哈希的 VSIX，然后重新加载窗口。UI 版本仍为 0.1.4，以包名区分测试版本；如需恢复，强制重新安装原 v0.1.4 VSIX 并重新加载，不删除片段或设置。
 
-Do not merge main before installation confirmation and remaining review gates. After confirmation, integrate the latest main into the performance branch, rerun checks, and use a merge preserving the staged commits. Behavior-changing integration requires another preview.
+请按说明检查日常片段、Tab/Enter、环境转换、中文混排、字体切换、注释及符号对齐、撤销重做、关闭自动对齐、管理器编辑保存和 profile 切换。自动测试不能替代实际安装试用。
 
-## Pending measured opportunity
-
-A read-only CPU profile attributes the largest cold-parse share to sanitization. A comment-only candidate preserved every-prefix sanitization/context behavior for 300 seeded fixtures and explicit masks. In a separate 200-sample 1MiB comment-heavy sanitization probe, median 19.3233ms fell to 5.9009ms and P95 25.5003ms to 7.9759ms. It is prepared under dist/performance-staging but is NOT included in the 4a12df8 VSIX. Applying its regression test and adding Windows failure diagnostics are currently blocked by repeated automatic-approval timeouts for worktree writes.
-
-## Latest validation
-
-Commit 4a12df8 adds a comment-aware sanitization fast path, retains the existing masking path for Markdown/HTML/backtick input, raises the native Windows measurement timeout to 15 seconds, and adds failure-only CI diagnostics. The remote run for commit 4a12df8 passed both Linux and Windows checks, extension-host suites, and preview packaging; only the release job was skipped because this is not a tag. The latest local VSIX is dist/performance/vscode-hypersnips-0.1.4-perf.4a12df8.vsix (SHA256 C2332B620D9B3F4A7FD4FE8C2A773FEF6E2C2EF8DE9656DAA6BA9C644B69117E).
-
-## Latest core benchmark (4a12df8 source)
-
-The final local run used 10 warmups and 200 samples per case on the same Windows machine. All three gates passed again. The 1 MiB typing baseline/current medians were 61.8044 / 0.7143 ms (current P95 1.3282 ms, 98.8% reduction). Wide alignment was 116.5894 / 9.9803 ms (91.4% reduction). Cold 1 MiB parse was 29.0068 ms median / 34.1484 ms P95, down from the pre-comment-fast-path 126.3343 / 204.2661 ms measurement. Structural fence insertion was 17.0945 / 19.8434 ms. The complete machine-readable output is docs/performance-results-4a12df8.json.
+性能分支 CI 只产出试用工件，发布任务受版本标签限制。收到试用确认后，才把最新 main 合入性能分支并复测；行为发生变化时重新提供测试包，通过后保留分阶段提交合并至 main。
