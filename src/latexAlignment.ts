@@ -74,10 +74,10 @@ function alignAnchors(
     width + (/[ \t]$/.test(segments[index] || entries[index].row.output) ? 0 : 1)
   ));
   entries.forEach(({ row, anchor }, index) => {
-    let suffix = segments[index] + ' '.repeat(Math.max(0, Math.round(column - widths[index]))) + anchor.symbol;
+    let suffix = ' '.repeat(Math.max(0, Math.round(column - widths[index]))) + anchor.symbol;
     if (anchor.symbol != '\\\\' && anchor.symbol != '%') suffix += ' ';
-    row.output += suffix;
-    row.width = displayWidth(suffix, tabSize, characterWidths, row.width);
+    row.output += segments[index] + suffix;
+    row.width = displayWidth(suffix, tabSize, characterWidths, widths[index]);
     row.cursor = anchor.end;
   });
 }

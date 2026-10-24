@@ -81,6 +81,13 @@ assert.ok(counting.reads < wide.length * 8,
 assert.deepStrictEqual(actual, reference.getAlignmentEdits(wide, wide.indexOf('\n') + 3, {}, 4,
   new Map(counting)));
 
+const longCell = '\\begin{matrix}\n' + 'x'.repeat(1000) + '&a \\\\\nx&b \\\\\n\\end{matrix}';
+const cellWidths = new CountingWidths([['x', 1 / 3]]);
+const cellEdits = getAlignmentEdits(longCell, longCell.indexOf('x'), {}, 4, cellWidths);
+assert.strictEqual(cellWidths.reads, 1001, 'measured cell content should not be measured a second time');
+assert.deepStrictEqual(cellEdits, reference.getAlignmentEdits(longCell, longCell.indexOf('x'), {}, 4,
+  new Map(cellWidths)), 'continuing from the measured width preserves fractional padding');
+
 console.log('alignment differential fixtures and linear width accumulation passed');
 
 async function testAffectedEnvironments() {
