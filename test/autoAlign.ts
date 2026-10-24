@@ -12,6 +12,8 @@ export async function testAutoAlignSetting() {
   let configure: (event: any) => void;
   let finishMeasurement: (() => void) | undefined;
   let holdMeasurement = false;
+  let automaticCandidates: string[] = [];
+  let manualCandidates: string[] = [];
   let text = '\\begin{matrix}\n  a&b \\\\\n  longer&c \\\\\n\\end{matrix}';
   let document = {
     uri: {}, languageId: 'latex', version: 1,
@@ -22,9 +24,10 @@ export async function testAutoAlignSetting() {
   let cursor = text.indexOf('a&');
   let editor = {
     document, options: { tabSize: 4 },
-    selection: { active: cursor }, selections: [{ anchor: cursor, active: cursor }],
+    selection: { start: cursor, active: cursor }, selections: [{ anchor: cursor, active: cursor }],
     edit: async () => { edits++; return true; },
   };
+  let provideCompletionItems: (document: typeof editor.document, position: number) => unknown;
   let disposable = () => ({ dispose() {} });
   let vscode = {
     Disposable: class { constructor(public dispose: () => void) {} },
@@ -43,12 +46,15 @@ export async function testAutoAlignSetting() {
       onDidChangeConfiguration: (handler: typeof configure) => { configure = handler; return disposable(); },
     },
     commands: { executeCommand: () => Promise.resolve(), registerCommand: disposable, registerTextEditorCommand: disposable },
-    languages: { registerCompletionItemProvider: disposable },
+    languages: { registerCompletionItemProvider: (_selector: unknown, provider: { provideCompletionItems: typeof provideCompletionItems }) => {
+      provideCompletionItems = provider.provideCompletionItems;
+      return disposable();
+    } },
     env: {},
   };
-  let exported: { activate?: (context: { subscriptions: unknown[] }) => void } = {};
+  let exported: { activate?: (context: { subscriptions: unknown[] }) => void; setSnippets?: (snippets: unknown[]) => void } = {};
   let extensionPath = path.join(__dirname, '../src/extension.js');
-  runInNewContext(readFileSync(extensionPath, 'utf8'), {
+  runInNewContext(readFileSync(extensionPath, 'utf8') + '\nexports.setSnippets = (snippets) => SNIPPETS_BY_LANGUAGE.set("latex", snippets);', {
     exports: exported, console,
     setTimeout: (callback: typeof timer) => { timer = callback; return 1; },
     clearTimeout: () => { timer = undefined; },
@@ -59,6 +65,15 @@ export async function testAutoAlignSetting() {
       if (name == './snippetProfiles') return { normalizeProfileName: () => '', getSnippetFilesForProfile: () => [] };
       if (name == './snippetManager') return { registerSnippetManager() {} };
       if (name == './environmentConvert') return { createEnvironmentNameSyncPlan: () => ({ handled: false }) };
+      if (name == './completion') return {
+        getAutomaticCompletion: (_document: unknown, _position: unknown, snippets: { trigger: string }[]) => {
+          automaticCandidates = Array.from(snippets, (snippet) => snippet.trigger);
+        },
+        getCompletions: (_document: unknown, _position: unknown, snippets: { trigger: string }[]) => {
+          manualCandidates = Array.from(snippets, (snippet) => snippet.trigger);
+          return [];
+        },
+      };
       if (name == './fontMetrics') return { getFontCharacterWidths: async () => {
         measurements++;
         if (holdMeasurement) await new Promise<void>((resolve) => { finishMeasurement = resolve; });
@@ -90,5 +105,19 @@ export async function testAutoAlignSetting() {
   finishMeasurement!();
   await running;
   assert.strictEqual(edits, 1, 'turning alignment off during measurement prevents edits');
+
+  let manualContextChecks = 0;
+  exported.setSnippets!([
+    { trigger: 'manual', automatic: false, get math() { manualContextChecks++; return false; } },
+    { trigger: 'automatic', automatic: true },
+    { trigger: 'math', automatic: true, math: true },
+    { trigger: 'text', automatic: true, text: true },
+  ]);
+  await change!({ document, contentChanges: [{ rangeOffset: cursor, rangeLength: 0, text: 'x', range: { start: { translate: () => cursor + 1 } } }] });
+  assert.deepStrictEqual(automaticCandidates, ['automatic', 'math'], 'typing filters manual and ineligible text snippets before matching');
+  assert.strictEqual(manualContextChecks, 0, 'typing skips context checks for manual snippets');
+  provideCompletionItems!(document, cursor);
+  assert.deepStrictEqual(manualCandidates, ['manual', 'automatic', 'math'], 'manual completion keeps eligible manual snippets in order');
+  assert.strictEqual(manualContextChecks, 1);
 }
 

@@ -987,7 +987,7 @@ export function activate(context: vscode.ExtensionContext) {
                 if (!editor || e.document != editor.document) return;
 
                 let latexContext = getEditorLatexContext(editor);
-                snippets = snippets.filter((snippet) => canExpandSnippetInContext(snippet, latexContext));
+                snippets = snippets.filter((snippet) => snippet.automatic && canExpandSnippetInContext(snippet, latexContext));
 
                 let mainChangePosition = mainChange.range.start.translate(0, mainChange.text.length);
                 let completion = getAutomaticCompletion(e.document, mainChangePosition, snippets);
