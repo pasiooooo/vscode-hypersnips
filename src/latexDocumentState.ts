@@ -31,8 +31,7 @@ interface Checkpoint { block: Block; before: ParseState; after: ParseState }
 const EMPTY: ParseState = { environments: [], delimiters: [], depth: 0, textDepths: [] };
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-function parseBlock(raw: string, command: RegExp): Block {
-  const sanitized = sanitizeLatexForParsing(raw);
+function parseBlock(raw: string, command: RegExp, sanitized = sanitizeLatexForParsing(raw)): Block {
   const block: Block = { raw, sanitized, environments: [], delimiters: [], braces: [] };
   for (const match of sanitized.matchAll(/\\(begin|end)\s*\{([^}]+)\}/g)) {
     const name = match[2].trim();
@@ -126,6 +125,7 @@ function nextBlockEnd(text: string, start: number, pending: RegExp) {
   let fence: { marker: string; length: number } | undefined;
   let html = false;
   let sanitizedEnd = start;
+  let sanitized: string | undefined;
   let pendingCommand = '';
   let pendingEnvironment = false;
   while (end < text.length) {
@@ -148,6 +148,7 @@ function nextBlockEnd(text: string, start: number, pending: RegExp) {
     end = next;
     if (!html && !fence) {
       let chunk = sanitizeLatexForParsing(text.slice(sanitizedEnd, end));
+      sanitized = sanitizedEnd == start ? chunk : undefined;
       sanitizedEnd = end;
       if (pendingEnvironment) {
         const close = chunk.indexOf('}');
@@ -166,7 +167,8 @@ function nextBlockEnd(text: string, start: number, pending: RegExp) {
       pendingCommand = match[0].trimEnd() + '\n';
     }
   }
-  return end;
+  // Later chunks can change earlier prefix masks, so reuse only one complete chunk.
+  return { end, sanitized: sanitizedEnd == end ? sanitized : undefined };
 }
 
 export class LatexDocumentState implements LatexDocumentSnapshot {
@@ -240,8 +242,8 @@ export class LatexDocumentState implements LatexDocumentSnapshot {
           continue;
         }
       }
-      const end = nextBlockEnd(text, start, this.pending);
-      const block = parseBlock(text.slice(start, end), this.command);
+      const { end, sanitized } = nextBlockEnd(text, start, this.pending);
+      const block = parseBlock(text.slice(start, end), this.command, sanitized);
       const after = advance(state, block, this.resolved.verbatimLikeEnvironments);
       checkpoints.push({ block, before: state, after });
       state = after;

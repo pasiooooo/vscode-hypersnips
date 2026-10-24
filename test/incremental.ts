@@ -98,3 +98,27 @@ assert.ok(configured.contextAt(configured.text.length).inMath, 'caller options c
 assert.ok(Object.isFrozen(initial.environmentPairAt(20)));
 assert.throws(() => initial.update([{ rangeOffset: NaN, rangeLength: 0, text: '' }]), RangeError);
 console.log('incremental plan/caret parity, 100 seeded multi-edits, immutable results and long partial commands passed');
+
+for (const text of [
+  '\\text\n~~~\nopen', '\\text\n<!--\nopen',
+  '\\text\n% comment\n{x}', '\\begin\n{align}\nx\n\\end{align}',
+  '<!--\n-->\nplain', '~~~\n$x$\n~~~\nplain',
+]) check(new LatexDocumentState(text));
+
+const contextModule = require('../src/latexContext') as typeof import('../src/latexContext');
+const sanitize = contextModule.sanitizeLatexForParsing;
+let sanitizations = 0;
+contextModule.sanitizeLatexForParsing = (...args: Parameters<typeof sanitize>) => {
+  sanitizations++;
+  return sanitize(...args);
+};
+try {
+  const state = new LatexDocumentState('first % hidden\nsecond\nthird');
+  assert.strictEqual(sanitizations, state.parsedBlocks, 'complete blocks should be sanitized once');
+  sanitizations = 0;
+  const next = state.update([{ rangeOffset: state.text.length, rangeLength: 0, text: 'x' }]);
+  assert.strictEqual(sanitizations, next.parsedBlocks, 'ordinary updates should reuse complete block sanitization');
+} finally {
+  contextModule.sanitizeLatexForParsing = sanitize;
+}
+console.log('complete-block sanitization reuse and incomplete-tail parity passed');
