@@ -194,7 +194,7 @@ export function getAlignmentEdits(
           } else if (symbol != '&') {
             if ((table && !inlineMath) || !/^[+=-]$/.test(symbol)) continue;
             // Signs in exponents, subscripts and unary expressions are not alignment points.
-            if (symbol != '=' && (/[+=\-*/(^_&$]\s*$/.test(line.slice(0, token.index)) ||
+            if (symbol != '=' && (/[+=\-*/(^_&$]$/.test(line.slice(0, token.index).trimEnd()) ||
                 !line.slice(indent.length, token.index).trim())) continue;
           }
           anchors.push({ start: token.index, end: tokens.lastIndex, symbol, cell });

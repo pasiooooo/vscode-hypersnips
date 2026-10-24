@@ -88,18 +88,31 @@ assert.strictEqual(cellWidths.reads, 1001, 'measured cell content should not be 
 assert.deepStrictEqual(cellEdits, reference.getAlignmentEdits(longCell, longCell.indexOf('x'), {}, 4,
   new Map(cellWidths)), 'continuing from the measured width preserves fractional padding');
 
-let whitespaceChecks = 0;
+const operatorRow = Array.from({ length: 32 }, () => 'p + q - r = s').join(' & ') + ' \\\\';
+const operatorTable = '\\begin{align}\n' + operatorRow + '\nlong + ' + operatorRow + '\n\\end{align}';
+const operatorExpected = reference.getAlignmentEdits(operatorTable, operatorTable.indexOf('p'));
+let whitespaceChecks = 0, unaryPrefixScans = 0;
 const regexTest = RegExp.prototype.test;
 RegExp.prototype.test = function(value: string) {
   if (this.source == '[ \\t]') whitespaceChecks++;
+  if (this.source == String.raw`[+=\-*/(^_&$]\s*$`) unaryPrefixScans += value.length;
   return regexTest.call(this, value);
 };
 try {
   assert.deepStrictEqual(getAlignmentEdits(longCell, longCell.indexOf('x'), {}, 4, new Map(cellWidths)), cellEdits);
+  assert.deepStrictEqual(getAlignmentEdits(operatorTable, operatorTable.indexOf('p')), operatorExpected);
 } finally {
   RegExp.prototype.test = regexTest;
 }
 assert.strictEqual(whitespaceChecks, 0, 'whitespace edits should scan runs instead of testing every code unit');
+assert.strictEqual(unaryPrefixScans, 0, 'unary checks should inspect the trimmed suffix instead of searching growing prefixes');
+
+for (const space of [' ', '\t', '\r', '\v', '\f', '\u00a0', '\u1680', '\u2000', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff']) {
+  const text = '\\begin{align}\n' + space + '-p' + space + '+' + space + 'q&=s \\\\\n' +
+    'long' + space + '-' + space + 'r&=s \\\\\n\\end{align}';
+  assert.deepStrictEqual(getAlignmentEdits(text, text.indexOf('p')),
+    reference.getAlignmentEdits(text, text.indexOf('p')), 'Unicode whitespace preserves unary sign classification');
+}
 
 console.log('alignment differential fixtures and linear width accumulation passed');
 

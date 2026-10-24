@@ -88,6 +88,14 @@ const baseWide = timed('wide alignment baseline', () => baselineAlignment.getAli
 const nowWide = timed('wide alignment current', () => currentAlignment.getAlignmentEdits(wide.text, wide.offset, {}, 4, new Map(), wideState));
 report.gates.push({ name: '100x128 alignment >=50% faster', passed: nowWide.medianMs <= baseWide.medianMs * .5,
   reductionPercent: +(100 * (1 - nowWide.medianMs / baseWide.medianMs)).toFixed(1) });
+const operators = fixture(0, 20, 32);
+operators.text = operators.text.replace(/v\d+_\d+/g, 'p + q - r = s');
+const operatorState = new LatexDocumentState(operators.text);
+assert.deepEqual(currentAlignment.getAlignmentEdits(operators.text, operators.offset, {}, 4, new Map(), operatorState),
+  baselineAlignment.getAlignmentEdits(operators.text, operators.offset));
+timed('operator alignment baseline', () => baselineAlignment.getAlignmentEdits(operators.text, operators.offset), {rows: 20, columns: 32});
+timed('operator alignment current', () => currentAlignment.getAlignmentEdits(operators.text, operators.offset, {}, 4, new Map(), operatorState),
+  {rows: 20, columns: 32});
 for (const count of [1000, 10000]) {
   const source = Array.from({length:count}, (_,i) => 'snippet trigger'+i+' "Demo" wA\nvalue\nendsnippet\n').join('');
   timed('snippet compile baseline', () => baselineParser.parse(source), {count});
