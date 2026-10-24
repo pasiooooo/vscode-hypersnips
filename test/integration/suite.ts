@@ -114,6 +114,31 @@ export async function run() {
     await until(() => comment.document.version > version, 'comment receives normal Tab edit');
     assert.ok(!comment.document.getText().includes('&'), 'comment must not insert an alignment separator');
   });
+  await test('distant multi-cursor batch preserves context and undo', async () => {
+    const middle = 'middle row\n'.repeat(200);
+    const source = '\\begin{matrix}\na|x\n' + middle + 'by\n\\end{matrix}';
+    const editor = await openMarked(source);
+    const last = editor.document.lineCount - 2;
+    editor.selections = [new vscode.Selection(1, 1, 1, 1), new vscode.Selection(last, 1, last, 1)];
+    let changes = 0;
+    const listener = vscode.workspace.onDidChangeTextDocument(event => {
+      if (event.document === editor.document) changes = Math.max(changes, event.contentChanges.length);
+    });
+    const before = editor.document.getText();
+    const after = '\\begin{matrix}\na & x\n' + middle + 'b & y\n\\end{matrix}';
+    try {
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      await until(() => editor.document.getText() === after, 'distant Tab batch');
+      assert.strictEqual(changes, 2, 'both positions arrive in the same document-change event');
+      await vscode.commands.executeCommand('undo');
+      await until(() => editor.document.getText() === before, 'distant batch undo');
+      await vscode.commands.executeCommand('redo');
+      await until(() => editor.document.getText() === after, 'distant batch redo');
+      editor.selection = new vscode.Selection(last, 4, last, 4);
+      await type('mm');
+      await until(() => editor.document.lineAt(last).text === 'b & MATHy', 'math context after distant batch');
+    } finally { listener.dispose(); }
+  });
   await test('auto alignment changes whitespace only and stops when disabled', async () => {
     const source = '\\begin{matrix}\n a|&b \\\\\n longer&c \\\\\n\\end{matrix}';
     const editor = await openMarked(source);
