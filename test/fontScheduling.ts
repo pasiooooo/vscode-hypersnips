@@ -9,8 +9,10 @@ interface Launch {
   finish: (error?: Error, result?: Record<string, number> | string) => void;
 }
 
-function loadFontMetrics() {
+function loadFontMetrics(coverageUnavailable = false) {
   const launches: Launch[] = [];
+  let collectedCharacters = 0;
+  let coverageCompilations = 0;
   const exported: { getFontCharacterWidths?: (
     font: EditorFont, text: string, isCurrent?: () => boolean
   ) => Promise<Map<string, number>> } = {};
@@ -19,6 +21,17 @@ function loadFontMetrics() {
     exports: exported,
     Buffer,
     console,
+    Set: class extends Set<unknown> {
+      constructor(values?: Iterable<unknown> | null) {
+        super(values);
+        if (typeof values == 'string') collectedCharacters += values.length;
+      }
+    },
+    RegExp: function(pattern: string, flags: string) {
+      coverageCompilations++;
+      if (coverageUnavailable) throw new Error('Unavailable coverage expression');
+      return new RegExp(pattern, flags);
+    },
     process: { platform: 'win32', env: { SystemRoot: 'C:\\Windows' } },
     queueMicrotask,
     require: (name: string) => {
@@ -38,7 +51,8 @@ function loadFontMetrics() {
       } };
     },
   });
-  return { getWidths: exported.getFontCharacterWidths!, launches };
+  return { getWidths: exported.getFontCharacterWidths!, launches,
+    collectedCharacters: () => collectedCharacters, coverageCompilations: () => coverageCompilations };
 }
 
 function font(family: string): EditorFont {
@@ -157,7 +171,65 @@ async function testQueuedGlyphFiltering() {
   assert.strictEqual(launches.length, 3, 'invalid delta is not repeatedly launched');
 }
 
+async function testCachedGlyphCoverage() {
+  const { getWidths, launches, collectedCharacters } = loadFontMetrics();
+  const known = 'x[]^-\\😀α\ud800A\udc00';
+  const first = getWidths(font('Coverage'), known);
+  await flush();
+  launches[0].finish(undefined, measured(launches[0]));
+  await first;
+  const before = collectedCharacters();
+  const hit = await getWidths(font('Coverage'), (known + '\u0301\n\t\0').repeat(200));
+  assert.strictEqual(hit.get('😀'), 1);
+  assert.strictEqual(hit.get('\ud800'), 1);
+  assert.strictEqual(collectedCharacters(), before, 'cache hits should avoid enumerating known body glyphs');
+  assert.strictEqual(launches.length, 1);
+
+  const missing = getWidths(font('Coverage'), known + 'β');
+  await flush();
+  assert.deepStrictEqual(launches[1].request!.characters, ['β'], 'only missing glyphs are measured');
+  launches[1].finish(undefined, measured(launches[1], 2));
+  assert.strictEqual((await missing).get('β'), 2);
+  const afterDelta = collectedCharacters();
+  const updated = await getWidths(font('Coverage'), (known + 'β').repeat(200));
+  assert.strictEqual(collectedCharacters(), afterDelta, 'new measurements refresh cached coverage');
+  updated.set('β', 99);
+  assert.strictEqual((await getWidths(font('Coverage'), 'β')).get('β'), 2, 'coverage hits still return isolated maps');
+
+  const failed = getWidths(font('Coverage'), 'γ');
+  await flush();
+  launches[2].finish(new Error('blocked'));
+  await failed;
+  const afterFailure = collectedCharacters();
+  assert.ok(!(await getWidths(font('Coverage'), 'γ'.repeat(200))).has('γ'));
+  assert.strictEqual(collectedCharacters(), afterFailure, 'failed glyphs use cached fallback coverage');
+  assert.strictEqual(launches.length, 3, 'coverage does not retry failed native glyphs');
+}
+
+async function testCoverageFallback() {
+  const { getWidths, launches, collectedCharacters, coverageCompilations } = loadFontMetrics(true);
+  const initial = getWidths(font('Fallback'), 'x');
+  await flush();
+  launches[0].finish(undefined, measured(launches[0]));
+  await initial;
+  const before = collectedCharacters();
+  assert.strictEqual((await getWidths(font('Fallback'), 'xx')).get('x'), 1);
+  assert.strictEqual((await getWidths(font('Fallback'), 'xxx')).get('x'), 1);
+  assert.ok(collectedCharacters() > before, 'unavailable coverage uses the original collector');
+  assert.strictEqual(coverageCompilations(), 1, 'failed coverage compilation is not retried on each hit');
+  assert.strictEqual(launches.length, 1);
+  const missing = getWidths(font('Fallback'), 'δ');
+  await flush();
+  assert.deepStrictEqual(launches[1].request!.characters, ['δ']);
+  launches[1].finish(undefined, measured(launches[1], 2));
+  assert.strictEqual((await missing).get('δ'), 2, 'unavailable coverage still measures new glyphs');
+  assert.strictEqual((await getWidths(font('Fallback'), 'δ')).get('δ'), 2);
+  assert.strictEqual(coverageCompilations(), 2, 'new measurements allow coverage to be rebuilt');
+}
+
 async function main() {
+  await testCachedGlyphCoverage();
+  await testCoverageFallback();
   await testQueuedGlyphFiltering();
   await testMergedRequests();
   await testFourFontCache();

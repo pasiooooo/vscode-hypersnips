@@ -11,6 +11,7 @@ export interface EditorFont {
 interface FontCacheEntry {
   font: EditorFont;
   widths: Map<string, number>;
+  coverage?: RegExp | null;
 }
 
 interface MeasurementWaiter {
@@ -96,6 +97,7 @@ async function measure(entry: FontCacheEntry, characters: string[]) {
     // Avoid repeatedly spawning a blocked or unavailable font service while typing.
     for (let char of characters) entry.widths.set(char, 0);
   }
+  entry.coverage = undefined;
 }
 
 function isCurrent(waiter: MeasurementWaiter) {
@@ -133,6 +135,15 @@ export function getFontCharacterWidths(font: EditorFont, text: string, isRequest
     fontCache.set(key, entry);
     if (fontCache.size > 4) fontCache.delete(fontCache.keys().next().value!);
   }
+  if (entry.widths.size && entry.coverage === undefined) {
+    try {
+      const known = [...entry.widths.keys()].map(char => '\\u{' + char.codePointAt(0)!.toString(16) + '}').join('');
+      entry.coverage = new RegExp('[^\\p{Mark}\\p{Control}' + known + ']', 'u');
+    } catch {
+      entry.coverage = null;
+    }
+  }
+  if (entry.coverage && !entry.coverage.test(text)) return Promise.resolve(availableWidths(entry));
   let characters = [...new Set(' ' + text + Array.from({ length: 94 }, (_, i) => String.fromCharCode(i + 33)).join(''))]
     .filter((char) => !/[\p{Mark}\p{Control}]/u.test(char));
   if (!characters.some((char) => !entry.widths.has(char))) return Promise.resolve(availableWidths(entry));
