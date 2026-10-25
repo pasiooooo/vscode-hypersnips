@@ -227,6 +227,19 @@ export function getAlignmentEdits(
   }
   if (rows.length < 2) return [];
 
+  // Padding before an empty first cell is not document indentation.
+  const dataRows = rows.filter((row) => row.cells.length || row.rowBreak);
+  if (dataRows.length) {
+    const contentRows = dataRows.filter((row) => row.source.slice(row.cursor, row.anchors[0].start).trim());
+    const base = (contentRows.length ? contentRows : dataRows).reduce((a, b) => a.width <= b.width ? a : b);
+    const indent = base.source.slice(0, base.cursor);
+    const indentWidth = base.width;
+    for (const row of dataRows) {
+      row.output = indent;
+      row.width = indentWidth;
+    }
+  }
+
   let cellCount = Math.max(...rows.map((row) => row.anchors[row.anchors.length - 1].cell));
   for (let cell = 0; cell <= cellCount; cell++) {
     let groups = new Map<string, { row: AlignmentRow; operators: Anchor[] }[]>();

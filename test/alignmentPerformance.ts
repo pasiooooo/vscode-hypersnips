@@ -109,7 +109,7 @@ assert.strictEqual(unaryPrefixScans, 0, 'unary checks should inspect the trimmed
 
 for (const space of [' ', '\t', '\r', '\v', '\f', '\u00a0', '\u1680', '\u2000', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff']) {
   const text = '\\begin{align}\n' + space + '-p' + space + '+' + space + 'q&=s \\\\\n' +
-    'long' + space + '-' + space + 'r&=s \\\\\n\\end{align}';
+    space + 'long' + space + '-' + space + 'r&=s \\\\\n\\end{align}';
   assert.deepStrictEqual(getAlignmentEdits(text, text.indexOf('p')),
     reference.getAlignmentEdits(text, text.indexOf('p')), 'Unicode whitespace preserves unary sign classification');
 }

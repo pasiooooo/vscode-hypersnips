@@ -12,6 +12,13 @@ function format(text: string, options: LatexContextOptions = {}, tabSize = 4) {
 }
 
 export function testLatexAlignment() {
+  const emptyFirstCell = '\\begin{tabular}{@{}ll@{}}\n  \\toprule\n  key & value \\\\\n  \\midrule\n  \t    &       \\\\\n  \\bottomrule\n\\end{tabular}';
+  assert.strictEqual(format(emptyFirstCell), '\\begin{tabular}{@{}ll@{}}\n  \\toprule\n  key & value \\\\\n  \\midrule\n      &       \\\\\n  \\bottomrule\n\\end{tabular}', 'empty first-cell padding must not widen other rows');
+  const extraIndent = '\\begin{matrix}\n  key & value \\\\\n  \t  x & y \\\\\n\\end{matrix}';
+  assert.strictEqual(format(extraIndent), '\\begin{matrix}\n  key & value \\\\\n  x   & y     \\\\\n\\end{matrix}', 'first-cell text uses the common row indentation');
+  const ruleComment = '\\begin{tabular}{ll}\n\\toprule % rule\n  key & value \\\\\n  \t x & y \\\\\n\\end{tabular}';
+  assert.ok(format(ruleComment).includes('\n  key & value '), 'a rule comment must not define data-row indentation');
+
   let table = String.raw`\begin{tabular}{llll}
       示例机构甲 & 测试人员甲 & 示例城 & DEMO           \\
       Demo Lab             & Sample Person & Demo City     &      \\

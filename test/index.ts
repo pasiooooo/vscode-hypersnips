@@ -221,7 +221,7 @@ a|
   let rowEnd = marked(String.raw`\begin{bmatrix}
 a \\|
 \end{bmatrix}`);
-  assert.strictEqual(shouldInsertAlignmentSeparator(rowEnd.text, rowEnd.offset), false);
+  assert.strictEqual(shouldInsertAlignmentSeparator(rowEnd.text, rowEnd.offset), true);
 
   let comment = marked(String.raw`\begin{bmatrix}
 a % |

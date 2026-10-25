@@ -14,6 +14,7 @@ import {
     getLatexContext,
     getSmartEnterPlan,
     getSmartEnterRecoveryPlan,
+    getSmartTabPlan,
     shouldInsertAlignmentSeparator,
     ALIGNMENT_SEPARATOR_ENVIRONMENTS,
     LatexContextOptions,
@@ -434,19 +435,34 @@ async function smartTab(editor: vscode.TextEditor) {
     let snapshot = getDocumentState(editor.document);
     let text = snapshot.text;
     let options = getLatexContextOptions();
-    let shouldInsertSeparator = editor.selections.every((selection) => {
-        return shouldInsertAlignmentSeparator(text, editor.document.offsetAt(selection.active), options, snapshot);
+    const plans = editor.selections.map((selection) => {
+        const offset = editor.document.offsetAt(selection.active);
+        if (selection.isEmpty) return getSmartTabPlan(text, offset, options, snapshot);
+        if (!shouldInsertAlignmentSeparator(text, offset, options, snapshot)) return undefined;
+        const start = editor.document.offsetAt(selection.start);
+        return { edits: [{ start, end: editor.document.offsetAt(selection.end), text: ' & ' }], cursorOffset: start + 3 };
     });
 
-    if (!shouldInsertSeparator) {
+    if (plans.some((plan) => !plan)) {
         await fallbackTab();
         return;
     }
 
-    await editor.edit((editBuilder) => {
-        for (let selection of editor.selections) {
-            editBuilder.replace(selection, ' & ');
-        }
+    const edits = [...new Map(plans.flatMap((plan) => plan!.edits).map((edit) =>
+        [`${edit.start}:${edit.end}`, edit] as const)).values()];
+    const cursors = plans.map((plan) => {
+        const own = plan!.edits[0];
+        if (!own) return mapAlignmentOffset(plan!.cursorOffset, edits);
+        // Each plan includes its own edit; only earlier edits from other carets shift it.
+        return plan!.cursorOffset + edits.reduce((delta, edit) => delta +
+            (edit.start != own.start && edit.end <= own.start ? edit.text.length - (edit.end - edit.start) : 0), 0);
+    });
+    if (edits.length && !await applyEdits(editor, edits, true, !isAutoAlignEnabled(editor.document))) return;
+    if (editor.document.version != snapshot.version + (edits.length ? 1 : 0) ||
+        vscode.window.activeTextEditor != editor) return;
+    editor.selections = cursors.map((offset) => {
+        const position = editor.document.positionAt(offset);
+        return new vscode.Selection(position, position);
     });
 }
 

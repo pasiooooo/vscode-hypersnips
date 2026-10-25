@@ -19,7 +19,9 @@ function check(state: LatexDocumentState, offsets?: number[]) {
     assert.deepStrictEqual(state.displayDelimiterAt(offset), findDisplayMathDelimiterAt(state.text, offset),
       `delimiter offset=${offset} text=${JSON.stringify(state.text)}`);
     assert.deepStrictEqual(edit.getSmartEnterPlan(state.text, offset, state.options, state), baselineEdit.getSmartEnterPlan(state.text, offset, state.options));
-    assert.strictEqual(edit.shouldInsertAlignmentSeparator(state.text, offset, state.options, state), baselineEdit.shouldInsertAlignmentSeparator(state.text, offset, state.options));
+    // Tab now navigates existing separators and accepts completed rows; compare both current parsing paths.
+    assert.strictEqual(edit.shouldInsertAlignmentSeparator(state.text, offset, state.options, state), edit.shouldInsertAlignmentSeparator(state.text, offset, state.options));
+    assert.deepStrictEqual(edit.getSmartTabPlan(state.text, offset, state.options, state), edit.getSmartTabPlan(state.text, offset, state.options));
     assert.deepStrictEqual(convert.createEnvironmentConversionPlan(state.text, offset, 'array', '{cc}', state.options, state), baselineConvert.createEnvironmentConversionPlan(state.text, offset, 'array', '{cc}', state.options));
     assert.deepStrictEqual(convert.createWrapCurrentMathStructurePlan(state.text, offset, 'aligned', '', state.options, state), baselineConvert.createWrapCurrentMathStructurePlan(state.text, offset, 'aligned', '', state.options));
     assert.deepStrictEqual(convert.createUnwrapMathStructurePlan(state.text, offset, state.options, state), baselineConvert.createUnwrapMathStructurePlan(state.text, offset, state.options));

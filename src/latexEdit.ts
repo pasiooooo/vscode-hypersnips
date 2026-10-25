@@ -5,6 +5,7 @@ import {
   getLatexContext,
   LatexContextOptions,
   resolveLatexContextOptions,
+  sanitizeLatexForParsing,
 } from './latexContext';
 
 export {
@@ -229,7 +230,58 @@ export function shouldInsertAlignmentSeparator(
   if (column > formulaLimit) return false;
   if (!formulaPart && line.trim().startsWith('%')) return false;
   if (/^\\(?:begin|end)\s*\{[^}]+\}$/.test(formulaPart)) return false;
-  if (/\\\\(?:\[[^\]]+\])?$/.test(formulaPart)) return false;
 
   return true;
+}
+
+export function getSmartTabPlan(
+  text: string,
+  offset: number,
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
+): { edits: TextEdit[]; cursorOffset: number } | undefined {
+  if (!shouldInsertAlignmentSeparator(text, offset, options, snapshot)) return undefined;
+  const bounds = getLineBounds(text, offset);
+  const context = getLatexContext(text, offset, options, snapshot);
+  const sanitized = snapshot?.sanitizedText ?? sanitizeLatexForParsing(text);
+  const tokens = /\\(?:begin|end)\s*\{[^}]+\}|\\[a-zA-Z]+\*?|\\[^\r\n]|[{}\[\]&]/g;
+  tokens.lastIndex = context.currentEnvironmentFrame?.beginEnd ?? bounds.start;
+  let braces = 0, brackets = 0, nested = 0;
+  let rowBreak: number | undefined;
+  let token: RegExpExecArray | null;
+  while ((token = tokens.exec(sanitized)) && token.index < bounds.end) {
+    const symbol = token[0];
+    if (/^\\begin\b/.test(symbol)) nested++;
+    else if (/^\\end\b/.test(symbol)) nested--;
+    else if (/^\\verb\*?$/.test(symbol)) {
+      const end = sanitized.indexOf(sanitized[tokens.lastIndex], tokens.lastIndex + 1);
+      if (end < 0 || /[\r\n]/.test(sanitized.slice(tokens.lastIndex, end))) return undefined;
+      if (offset >= token.index && offset <= end) return undefined;
+      tokens.lastIndex = end + 1;
+    } else if (symbol === '{') braces++;
+    else if (symbol === '}') braces--;
+    else if (symbol === '[') brackets++;
+    else if (symbol === ']') brackets--;
+    else if (!nested && !braces && !brackets && token.index >= bounds.start) {
+      if (symbol === '&' && token.index >= offset) {
+        const after = token.index + 1;
+        const edits = text[after] === ' ' ? [] : [{ start: after,
+          end: after + (text[after] === '\t' ? 1 : 0), text: ' ' }];
+        return { edits, cursorOffset: after + 1 };
+      }
+      if (symbol === '\\\\' || /^\\tabularnewline\*?$/.test(symbol)) {
+        const suffix = /^\*?(?:\[[^\]]*\])?/.exec(sanitized.slice(tokens.lastIndex, bounds.end))![0];
+        const end = tokens.lastIndex + suffix.length;
+        if (offset <= end || !sanitized.slice(end, offset).trim()) {
+          rowBreak = token.index;
+          break;
+        }
+      }
+    }
+  }
+  const indentEnd = bounds.start + text.slice(bounds.start, bounds.end).match(/^[ \t]*/)![0].length;
+  let start = Math.min(offset, rowBreak ?? offset), end = start;
+  while (start > indentEnd && /[ \t]/.test(text[start - 1])) start--;
+  while (end < bounds.end && /[ \t]/.test(text[end])) end++;
+  return { edits: [{ start, end, text: ' & ' }], cursorOffset: start + 3 };
 }

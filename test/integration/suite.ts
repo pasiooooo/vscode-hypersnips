@@ -78,6 +78,75 @@ export async function run() {
     await until(() => editor.document.getText().includes('\\end{align*}'), 'matching environment name');
     assert.strictEqual(editor.document.getText(), '\\begin{align*}\n  a &= b\n\\end{align*}');
   });
+  await test('Tab on an empty first cell navigates without widening the header', async () => {
+    const editor = await openMarked('\\begin{tabular}{@{}ll@{}}\n  \\toprule\n  key & value \\\\\n  \\midrule\n      |&       \\\\\n  \\bottomrule\n\\end{tabular}');
+    await configure(true);
+    const before = editor.document.getText();
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.selection.active.line === 4 && editor.selection.active.character === 8, 'empty-cell Tab caret');
+    await delay(400);
+    assert.strictEqual(editor.document.getText(), before, 'navigation must not insert a Tab or change padding');
+  });
+  await test('Tab visits existing separators before inserting a new column', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  al|pha & beta & gamma \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    for (const column of [10, 17]) {
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      await until(() => editor.selection.active.character === column, 'next cell caret');
+      assert.strictEqual(editor.document.getText(), before, 'existing separator navigation leaves content intact');
+    }
+  });
+  for (const afterBreak of [false, true]) {
+    await test('Tab inserts before an existing row break from ' + (afterBreak ? 'after' : 'before') + ' it', async () => {
+      const editor = await openMarked('\\begin{tabular}{ll}\n  alpha' + (afterBreak ? ' \\\\|' : '| \\\\') + '\n\\end{tabular}');
+      await configure(true);
+      const before = editor.document.getText();
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      const after = '\\begin{tabular}{ll}\n  alpha & \\\\\n\\end{tabular}';
+      await until(() => editor.document.getText() === after && editor.selection.active.character === 10, 'new cell before row break');
+      await delay(400);
+      assert.strictEqual(editor.document.getText(), after);
+      await vscode.commands.executeCommand('undo');
+      await until(() => editor.document.getText() === before, 'one undo restores pre-Tab row');
+    });
+  }
+  await test('Tab supports mixed multi-cursor navigation and insertion', async () => {
+    const editor = await openMarked('\\begin{matrix}\na|x\nb & c\n\\end{matrix}');
+    editor.selections = [new vscode.Selection(1, 1, 1, 1), new vscode.Selection(2, 1, 2, 1)];
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.document.lineAt(1).text === 'a & x' && editor.selections.every(s => s.active.character === 4), 'mixed Tab plans and shifted offsets');
+    assert.strictEqual(editor.document.getText(), '\\begin{matrix}\na & x\nb & c\n\\end{matrix}');
+    await type('z');
+    await until(() => editor.document.lineAt(1).text === 'a & zx' && editor.document.lineAt(2).text === 'b & zc', 'typing at both planned carets');
+  });
+  await test('empty-row Tab and delayed alignment share one undo step', async () => {
+    const editor = await openMarked('\\begin{tabular}{ll}\n  key & value \\\\\n  |\\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    const after = '\\begin{tabular}{ll}\n  key & value \\\\\n      &       \\\\\n\\end{tabular}';
+    await until(() => editor.document.getText() === after && editor.selection.active.character === 8, 'aligned empty row and caret');
+    await configure(false);
+    await type('q');
+    await until(() => editor.document.lineAt(2).text.startsWith('      & q'), 'typing in the newly inserted cell');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === after, 'typing after Tab has a separate undo step');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'one undo removes Tab and delayed alignment');
+    await vscode.commands.executeCommand('redo');
+    await until(() => editor.document.getText() === after, 'redo restores Tab and delayed alignment together');
+  });
+  await test('first-column indentation normalizes while keeping content and caret', async () => {
+    const editor = await openMarked('\\begin{tabular}{ll}\n  key & value \\\\\n  \t x| & y \\\\\n\\end{tabular}');
+    await configure(true);
+    await type('z');
+    await until(() => editor.document.lineAt(2).text.startsWith('  xz '), 'common first-column indentation');
+    await until(() => editor.selection.active.line === 2 && editor.selection.active.character === 4, 'caret follows the first-cell content');
+    assert.ok(editor.document.lineAt(1).text.startsWith('  key & '), 'header padding is not inflated');
+    await configure(false);
+    await type('q');
+    await until(() => editor.document.lineAt(2).text.startsWith('  xzq '), 'typing continues next to its content');
+  });
   for (const [command, eol] of [['hsnips.smartEnter', '\n'], ['type', '\n'], ['hsnips.smartEnter', '\r\n'], ['type', '\r\n']]) {
     await test(command + (eol === '\r\n' ? ' CRLF' : ' LF') + ' completes columns, grows declaration and preserves undo', async () => {
       const editor = await openMarked('\\begin{tabular}{lc}\n  a & b & c \\\\\n  d|\n\\end{tabular}'.replace(/\n/g, eol));
