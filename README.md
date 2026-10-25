@@ -6,6 +6,8 @@ vscode-hypersnips 是一个面向 VS Code 的 LaTeX 数学公式 snippet 扩展�
 
 当前维护者：`pasiooooo`。扩展 ID：`pasiooooo.vscode-hypersnips`。
 
+版本变化见 [CHANGELOG.md](CHANGELOG.md)。GitHub Release 正文会直接展示对应版本的完整更新说明。
+
 > 安装本 fork 前，请先禁用或卸载此前安装的旧版扩展及原版 HyperSnips，避免重复处理按键和 snippet。改名后仍兼容 `hsnips.*` 命令、设置与已有 `.hsnips` 文件，无需迁移 snippet 目录。
 
 ## 功能特性
@@ -298,6 +300,9 @@ npm run compile
 - `npm test`：运行核心 LaTeX 编辑逻辑测试。
 - `npm run check`：依次运行静态检查和测试。
 - `npm run package`：生成 `dist/vscode-hypersnips-<version>.vsix`。
+- `npm run test:integration`：在独立用户数据、扩展、工作区及虚构片段目录中运行真实 VS Code 宿主测试。
+- `npm run package:performance`：从干净工作树生成带提交短哈希的性能试用包。
+- `npm run release:notes -- v<version>`：校验标签版本并生成 `dist/release-notes.md`，仅供预览，不执行发布。
 
 目录按职责组织：`src/` 为扩展源码，`test/` 为测试和 fixture，`scripts/` 为构建脚本，`images/` 为图标资源。测试放在 `src/` 中也能工作；本项目将它们独立出来，避免进入扩展编译产物。`out/`、`.test-out/` 和 `dist/` 分别存放扩展编译结果、测试编译结果和安装包，均不提交 Git；测试和构建文件不打入 VSIX。
 
@@ -309,16 +314,37 @@ Snippet Manager 使用 `monaco-editor` 的精简运行时资源。`vsce package`
 npm run package
 ```
 
-## 自动发布
+## Pull Request 与自动发布
 
-推送到 `main` 或提交 Pull Request 时，GitHub Actions 会在 Linux 和 Windows 上检查并运行测试，成功后生成 VSIX artifact。发布新版本时运行：
+开发改动先提交到分支，并将面向使用者的变化写入 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]`。推送到 `main`、`codex/performance-refactor` 或提交以 `main` 为目标的 Pull Request 时，GitHub Actions 会在 Linux 和 Windows 上运行回归及真实 VS Code 宿主测试，成功后生成 VSIX artifact。
+
+性能试用通过后，由维护者创建 `codex/performance-refactor` → `main` 的 Pull Request，检查改动、测试结果及试用反馈，再选择 **Create a merge commit** 合并，以保留分阶段提交。若同步最新 `main` 后产生影响行为的改动，应重新测试并提供试用包。合并 PR 本身不会创建 Release。
+
+准备正式发布时另开版本准备分支。以下以未来的 `0.1.5` 为例，当前试用包仍保持 `0.1.4`：
+
+1. 将 `[Unreleased]` 的本次内容整理为 `## [0.1.5] - YYYY-MM-DD`，填入实际发布日期，顶部继续保留空的 `[Unreleased]`。
+2. 更新版本并预览将来展示的 Release 正文：
 
 ```sh
-npm version patch
-git push origin main --follow-tags
+npm version 0.1.5 --no-git-tag-version
+npm run release:notes -- v0.1.5
+npm run check
+npm run package
 ```
 
-推送 `v<version>` 标签会自动创建 GitHub Release，并上传对应的 VSIX。标签版本必须与 `package.json` 一致，检查或打包失败不会发布。流程使用 GitHub 提供的 `GITHUB_TOKEN`，无需另配发布密钥；不会发布到 VS Code Marketplace。
+3. 将 `package.json`、`package-lock.json` 和 `CHANGELOG.md` 一起提交，经 PR 检查后合入 `main`。版本准备阶段使用 `--no-git-tag-version`，避免在日志尚未完整时提前生成发布标签。
+4. 在干净工作目录同步已经审核的 `main`，再创建新标签并推送：
+
+```sh
+git switch main
+git pull --ff-only origin main
+git tag -a v0.1.5 -m "Release v0.1.5"
+git push origin v0.1.5
+```
+
+标签必须与 `package.json` 的版本一致，且 CHANGELOG 中必须有唯一、带日期、包含更新条目的对应章节。工作流提取该章节到 `dist/release-notes.md`，随 VSIX artifact 传递给发布任务，再用 `gh release create --notes-file` 将标题、分类和条目直接展示在 GitHub Release 正文中。未发布内容和其他版本不会混入正文，验证、测试或打包失败均不会发布。
+
+`CHANGELOG.md` 随 VSIX 分发，生成的说明文件、测试及构建脚本不进入扩展。流程仅由 `v<version>` 标签触发 GitHub Release，使用 GitHub 提供的 `GITHUB_TOKEN`，无需另配发布密钥；不会发布到 VS Code Marketplace。不要重用或移动已有的 `v0.1.4` 标签。
 
 ## 致谢
 
