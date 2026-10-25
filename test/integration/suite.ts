@@ -58,6 +58,8 @@ export async function run() {
     await vscode.commands.executeCommand('hsnips.smartTab');
     await until(() => editor.document.getText().includes(' & '), 'smart Tab edit');
     assert.strictEqual(editor.document.getText(), '\\begin{align}\n  a & \n\\end{align}');
+    // Text and selection notifications can arrive separately from the editor.
+    await until(() => editor.selection.active.line === 1 && editor.selection.active.character === 6, 'smart Tab caret update');
     assert.strictEqual(editor.selection.active.character, 6);
     const beforeEnter = editor.document.getText();
     await vscode.commands.executeCommand('hsnips.smartEnter');
