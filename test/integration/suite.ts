@@ -85,12 +85,28 @@ export async function run() {
       const expected = '\\begin{tabular}{lcl}\n  a & b & c \\\\\n  d & & \\\\\n  \n\\end{tabular}'.replace(/\n/g, eol);
       const withoutPadding = (text: string) => text.replace(/[ \t]/g, '');
       await until(() => withoutPadding(editor.document.getText()) === withoutPadding(expected), 'row and declaration completion');
+      await delay(400);
       await configure(false);
       assert.equal(editor.selection.active.line, 3);
       assert.equal(editor.selection.active.character, 2);
       const after = editor.document.getText();
+      await type('next');
+      try {
+        await until(() => editor.document.lineAt(3).text.trim() === 'next', 'typing on the new row');
+      } catch (error) {
+        console.error('Enter typing evidence: ' + JSON.stringify({ command, eol, after, actual: editor.document.getText(),
+          selection: editor.selection, version: editor.document.version }));
+        throw error;
+      }
       await vscode.commands.executeCommand('undo');
-      await until(() => editor.document.getText() === before, 'one undo restores cells, declaration and newline');
+      await until(() => editor.document.getText() === after, 'later typing has its own undo boundary');
+      await vscode.commands.executeCommand('undo');
+      try {
+        await until(() => editor.document.getText() === before, 'one undo restores cells, declaration and newline');
+      } catch (error) {
+        console.error('Enter undo evidence: ' + JSON.stringify({ command, eol, before, after, actual: editor.document.getText() }));
+        throw error;
+      }
       await vscode.commands.executeCommand('redo');
       await until(() => editor.document.getText() === after, 'one redo restores the complete Enter edit');
     });
@@ -119,6 +135,21 @@ export async function run() {
     await vscode.commands.executeCommand('undo');
     await delay(400);
     assert.equal(editor.document.getText(), before);
+  });
+  await test('Enter with no whitespace alignment keeps later typing separately undoable', async () => {
+    const editor = await openMarked('\\begin{tabular}{cc}\n  a|\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    const after = '\\begin{tabular}{cc}\n  a & \\\\\n  \n\\end{tabular}';
+    await until(() => editor.document.getText() === after, 'single-row Enter completion');
+    await delay(400);
+    await type('next');
+    await until(() => editor.document.lineAt(2).text.trim() === 'next', 'typing after a no-op alignment');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === after, 'typing undo leaves the completed Enter');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'second undo restores the original row');
   });
   await test('automatic snippet respects math and text contexts', async () => {
     let editor = await openMarked('|');

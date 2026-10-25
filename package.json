@@ -243,7 +243,7 @@
 		"compile": "tsc -p ./",
 		"watch": "tsc -watch -p ./",
 		"lint": "tsc --noEmit -p ./",
-		"test": "tsc -p tsconfig.test.json && node tmp/test-out/test/index.js && node tmp/test-out/test/incremental.js && node --expose-gc tmp/test-out/test/incrementalMemory.js && node tmp/test-out/test/alignmentPerformance.js && node tmp/test-out/test/fontScheduling.js && node tmp/test-out/test/snippetPerformance.js && node tmp/test-out/test/snippetManager.js && node tmp/test-out/test/completionPerformance.js && node tmp/test-out/test/sanitizingPerformance.js && node tmp/test-out/test/latexColumns.js && node tmp/test-out/test/smartEnterColumns.js && node test/releaseNotes.cjs",
+		"test": "tsc -p tsconfig.test.json && node tmp/test-out/test/index.js && node tmp/test-out/test/incremental.js && node --expose-gc tmp/test-out/test/incrementalMemory.js && node tmp/test-out/test/alignmentPerformance.js && node tmp/test-out/test/fontScheduling.js && node tmp/test-out/test/snippetPerformance.js && node tmp/test-out/test/snippetManager.js && node tmp/test-out/test/completionPerformance.js && node tmp/test-out/test/sanitizingPerformance.js && node tmp/test-out/test/latexColumns.js && node tmp/test-out/test/smartEnterColumns.js && node tmp/test-out/test/enterSelection.js && node test/releaseNotes.cjs",
 		"check": "npm run lint && npm run test",
 		"package": "node -e \"require('fs').mkdirSync('dist', { recursive: true })\" && vsce package --out dist/",
 		"test:integration": "npm run compile && tsc -p tsconfig.test.json && node scripts/run-integration.cjs",

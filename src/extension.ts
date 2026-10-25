@@ -176,7 +176,7 @@ async function typeText(text: string) {
     await vscode.commands.executeCommand('type', { text });
 }
 
-async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[], undoStopBefore = true) {
+async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[], undoStopBefore = true, undoStopAfter = true) {
     applyingLatexEdit = true;
     try {
         return await editor.edit((editBuilder) => {
@@ -189,7 +189,7 @@ async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[], undoStop
                     edit.text
                 );
             }
-        }, { undoStopBefore, undoStopAfter: true });
+        }, { undoStopBefore, undoStopAfter });
     } finally {
         applyingLatexEdit = false;
     }
@@ -303,7 +303,8 @@ async function smartEnter(editor: vscode.TextEditor) {
     let snapshot = getDocumentState(editor.document);
     let text = snapshot.text;
     let offset = editor.document.offsetAt(editor.selection.active);
-    let plan = getSmartEnterPlan(text, offset, getLatexContextOptions(), snapshot, isAutoAlignEnabled(editor.document),
+    const autoAlign = isAutoAlignEnabled(editor.document);
+    let plan = getSmartEnterPlan(text, offset, getLatexContextOptions(), snapshot, autoAlign,
         editor.document.eol == vscode.EndOfLine.CRLF ? '\r\n' : '\n');
 
     if (!plan.handled) {
@@ -311,8 +312,9 @@ async function smartEnter(editor: vscode.TextEditor) {
         return;
     }
 
-    let inserted = await applyEdits(editor, plan.edits);
-    if (inserted) {
+    // Leave this undo step open for the pending whitespace alignment.
+    let inserted = await applyEdits(editor, plan.edits, true, !autoAlign);
+    if (inserted && editor.document.version == snapshot.version + 1 && vscode.window.activeTextEditor == editor) {
         let newPosition = editor.document.positionAt(plan.cursorOffset as number);
         editor.selection = new vscode.Selection(newPosition, newPosition);
         editor.revealRange(new vscode.Range(newPosition, newPosition));
@@ -335,13 +337,14 @@ async function recoverSmartEnterAfterPlainEnter(
 
     let currentText = current.text;
     let beforeEnterText = previous?.text ?? (currentText.slice(0, change.rangeOffset) + currentText.slice(change.rangeOffset + change.text.length));
+    const autoAlign = isAutoAlignEnabled(editor.document);
     let plan = getSmartEnterRecoveryPlan(
         beforeEnterText,
         change.rangeOffset,
         currentText,
         getLatexContextOptions(),
         previous,
-        editor.selections.length == 1 && isAutoAlignEnabled(editor.document),
+        editor.selections.length == 1 && autoAlign,
         editor.document.eol == vscode.EndOfLine.CRLF ? '\r\n' : '\n'
     );
 
@@ -349,8 +352,9 @@ async function recoverSmartEnterAfterPlainEnter(
         return false;
     }
 
-    let inserted = await applyEdits(editor, plan.edits, false);
-    if (inserted && typeof plan.cursorOffset == 'number') {
+    let inserted = await applyEdits(editor, plan.edits, false, !autoAlign);
+    if (inserted && typeof plan.cursorOffset == 'number' && editor.document.version == current.version + 1 &&
+        vscode.window.activeTextEditor == editor) {
         let newPosition = editor.document.positionAt(plan.cursorOffset);
         editor.selection = new vscode.Selection(newPosition, newPosition);
         editor.revealRange(new vscode.Range(newPosition, newPosition));
