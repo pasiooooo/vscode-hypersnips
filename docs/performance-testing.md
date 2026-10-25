@@ -12,7 +12,7 @@
 4. 执行 Developer: Reload Window，再开始测试。如 VS Code 拒绝同版本替换，使用其 CLI 的 --install-extension <安装包绝对路径> --force，然后重新加载。
 5. 恢复时重新安装原来的 v0.1.4 VSIX 并重新加载窗口。不要删除用户片段目录或设置。
 
-自动化测试使用独立用户数据、扩展和虚构片段目录，不会把测试片段写入日常配置。
+自动化测试使用 `tmp/integration/` 下独立的用户数据、扩展、工作区和虚构片段目录，不会把测试片段写入日常配置。测试编译、下载缓存、日志及其他中间文件统一放在 `tmp/`。
 
 ## 人工检查清单
 
@@ -22,6 +22,7 @@
 - 补全列表中的手动选择、自动触发、带多个占位符及动态 JavaScript 的现有规则。
 - align、matrix、tabular 和自定义环境中的 Tab/Enter、多光标、跨行粘贴。
 - &、+-=、行末双反斜杠及注释 % 的对齐；注释内容、转义字符和公式内容不被改变。
+- 行尾 Enter 按其他行最多列补齐缺失的 &；表格声明不足时只追加 l，保留旧列样式和外侧竖线。检查 \multicolumn、尾注释、已有行尾符、关闭自动对齐及一次撤销/重做。
 - 中英文混排、Tab、组合字符；不同字体/字号切换后仍按当前字体对齐。
 - 嵌套环境、text 类命令、verbatim、Markdown 围栏，以及输入到一半的 begin/end 或括号。
 - 修改 begin/end 名称、环境转换、包装和解除包装。
@@ -38,7 +39,7 @@
 
 - npm run check：类型检查和确定性回归测试。
 - npm run test:integration：真实 VS Code 扩展宿主测试，默认下载稳定版；可通过 VSCODE_TEST_EXECUTABLE 指定本机 VS Code。Linux 无桌面环境使用 xvfb-run -a。
-- npm run benchmark：同进程比较冻结的原始算法与性能分支，报告输出到 dist/performance/results.json。
+- npm run benchmark：同进程比较冻结的原始算法与性能分支，原始结果输出到 tmp/performance/results.json。
 - npm run package:performance：只允许干净工作树，输出带当前提交哈希的测试包；不发布。
 
 性能报告的函数耗时不等同于实际输入延迟。任意用户正则或 JavaScript 的执行时间仍无法保证上限；本轮未更换其执行语义。

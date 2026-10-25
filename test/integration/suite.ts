@@ -76,6 +76,50 @@ export async function run() {
     await until(() => editor.document.getText().includes('\\end{align*}'), 'matching environment name');
     assert.strictEqual(editor.document.getText(), '\\begin{align*}\n  a &= b\n\\end{align*}');
   });
+  for (const [command, eol] of [['hsnips.smartEnter', '\n'], ['type', '\n'], ['hsnips.smartEnter', '\r\n'], ['type', '\r\n']]) {
+    await test(command + (eol === '\r\n' ? ' CRLF' : ' LF') + ' completes columns, grows declaration and preserves undo', async () => {
+      const editor = await openMarked('\\begin{tabular}{lc}\n  a & b & c \\\\\n  d|\n\\end{tabular}'.replace(/\n/g, eol));
+      const before = editor.document.getText();
+      await configure(true);
+      await vscode.commands.executeCommand(command, ...(command === 'type' ? [{ text: '\n' }] : []));
+      const expected = '\\begin{tabular}{lcl}\n  a & b & c \\\\\n  d & & \\\\\n  \n\\end{tabular}'.replace(/\n/g, eol);
+      const withoutPadding = (text: string) => text.replace(/[ \t]/g, '');
+      await until(() => withoutPadding(editor.document.getText()) === withoutPadding(expected), 'row and declaration completion');
+      await configure(false);
+      assert.equal(editor.selection.active.line, 3);
+      assert.equal(editor.selection.active.character, 2);
+      const after = editor.document.getText();
+      await vscode.commands.executeCommand('undo');
+      await until(() => editor.document.getText() === before, 'one undo restores cells, declaration and newline');
+      await vscode.commands.executeCommand('redo');
+      await until(() => editor.document.getText() === after, 'one redo restores the complete Enter edit');
+    });
+  }
+  await test('disabled auto alignment preserves Enter without column completion', async () => {
+    const editor = await openMarked('\\begin{tabular}{lc}\n  a & b & c \\\\\n  d|\n\\end{tabular}');
+    await configure(false);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    const expected = '\\begin{tabular}{lc}\n  a & b & c \\\\\n  d \\\\\n  \n\\end{tabular}';
+    await until(() => editor.document.getText() === expected, 'disabled completion keeps the original declaration and separators');
+  });
+  await test('first newline in a CRLF document preserves the Enter caret', async () => {
+    const editor = await openMarked('\\begin{tabular}{lc}a|');
+    await editor.edit(builder => builder.setEndOfLine(vscode.EndOfLine.CRLF));
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.document.getText() === '\\begin{tabular}{lc}a & \\\\\r\n', 'first CRLF Enter completion');
+    assert.equal(editor.selection.active.line, 1);
+    assert.equal(editor.selection.active.character, 0);
+  });
+  await test('undo restoring a newline does not trigger column completion', async () => {
+    const editor = await openMarked('\\begin{tabular}{ccc}\n  a|\n  \n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await editor.edit(builder => builder.delete(new vscode.Range(1, 3, 2, 0)));
+    await vscode.commands.executeCommand('undo');
+    await delay(400);
+    assert.equal(editor.document.getText(), before);
+  });
   await test('automatic snippet respects math and text contexts', async () => {
     let editor = await openMarked('|');
     await type('zz');

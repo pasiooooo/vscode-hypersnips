@@ -5,7 +5,7 @@ const path = require('path');
 const assert = require('assert/strict');
 const { performance } = require('perf_hooks');
 const root = path.resolve(__dirname, '..');
-const built = path.join(root, '.test-out');
+const built = path.join(root, 'tmp/test-out');
 const baselineContext = require(path.join(built, 'test/reference/latexContext'));
 const baselineEnvironment = require(path.join(built, 'test/reference/environmentConvert'));
 const baselineAlignment = require(path.join(built, 'test/reference/latexAlignment'));
@@ -143,7 +143,7 @@ if (global.gc) {
   report.memory = { cycles: 100, warmupCycles: 20, beforeBytes: before, afterBytes: batches.at(-1), batchHeapBytes: batches,
     note: 'Synthetic parse/edit/release cycles with references leaving helper scope; post-GC heap trend is not proof of absence of all leaks.' };
 }
-const out = path.join(root, 'dist/performance/results.json');
+const out = path.join(root, 'tmp/performance/results.json');
 fs.mkdirSync(path.dirname(out), {recursive:true});
 fs.writeFileSync(out, JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify({gates:report.gates,memory:report.memory,report:out}));

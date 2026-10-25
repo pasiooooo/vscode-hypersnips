@@ -8,6 +8,7 @@ scripts/**
 src/**
 test/**
 .test-out/**
+tmp/**
 dist/**
 out/test/**
 syntaxes/*.yaml

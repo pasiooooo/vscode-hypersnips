@@ -1,4 +1,5 @@
 out
+tmp/
 .test-out/
 dist/
 node_modules

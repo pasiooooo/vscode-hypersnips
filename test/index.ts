@@ -1,6 +1,5 @@
 import * as assert from 'assert';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import {
   getLatexContext,
@@ -575,7 +574,9 @@ function testTextOnlySnippetFlag() {
 }
 
 function testSnippetProfiles() {
-  let tempDir = mkdtempSync(path.join(os.tmpdir(), 'vscode-hypersnips-'));
+  const fixtureRoot = path.resolve(__dirname, '../../fixtures');
+  mkdirSync(fixtureRoot, { recursive: true });
+  let tempDir = mkdtempSync(path.join(fixtureRoot, 'vscode-hypersnips-'));
   try {
     writeFileSync(
       path.join(tempDir, 'latex.hsnips'),
@@ -638,6 +639,7 @@ function testSnippetProfiles() {
       ['prof', 'allbase', 'base', 'allprof']
     );
   } finally {
+    assert.ok(path.resolve(tempDir).startsWith(fixtureRoot + path.sep));
     rmSync(tempDir, { recursive: true, force: true });
   }
 }

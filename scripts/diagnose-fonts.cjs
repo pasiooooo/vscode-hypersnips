@@ -5,7 +5,7 @@ const { runInNewContext } = require('vm');
 const { performance } = require('perf_hooks');
 
 if (process.platform !== 'win32') process.exit(0);
-const source = readFileSync(path.resolve(__dirname, '../.test-out/src/fontMetrics.js'), 'utf8');
+const source = readFileSync(path.resolve(__dirname, '../tmp/test-out/src/fontMetrics.js'), 'utf8');
 const exportsForProbe = {};
 runInNewContext(source + '\nexports.script = measureScript;', {
   exports: exportsForProbe, require, Buffer, process, queueMicrotask,

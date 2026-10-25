@@ -176,7 +176,7 @@ async function typeText(text: string) {
     await vscode.commands.executeCommand('type', { text });
 }
 
-async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[]) {
+async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[], undoStopBefore = true) {
     applyingLatexEdit = true;
     try {
         return await editor.edit((editBuilder) => {
@@ -189,7 +189,7 @@ async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[]) {
                     edit.text
                 );
             }
-        });
+        }, { undoStopBefore, undoStopAfter: true });
     } finally {
         applyingLatexEdit = false;
     }
@@ -303,7 +303,8 @@ async function smartEnter(editor: vscode.TextEditor) {
     let snapshot = getDocumentState(editor.document);
     let text = snapshot.text;
     let offset = editor.document.offsetAt(editor.selection.active);
-    let plan = getSmartEnterPlan(text, offset, getLatexContextOptions(), snapshot);
+    let plan = getSmartEnterPlan(text, offset, getLatexContextOptions(), snapshot, isAutoAlignEnabled(editor.document),
+        editor.document.eol == vscode.EndOfLine.CRLF ? '\r\n' : '\n');
 
     if (!plan.handled) {
         await typeText('\n');
@@ -339,14 +340,16 @@ async function recoverSmartEnterAfterPlainEnter(
         change.rangeOffset,
         currentText,
         getLatexContextOptions(),
-        previous
+        previous,
+        editor.selections.length == 1 && isAutoAlignEnabled(editor.document),
+        editor.document.eol == vscode.EndOfLine.CRLF ? '\r\n' : '\n'
     );
 
-    if (!plan.handled) {
+    if (!plan.handled || editor.document.version != current.version || vscode.window.activeTextEditor != editor) {
         return false;
     }
 
-    let inserted = await applyEdits(editor, plan.edits);
+    let inserted = await applyEdits(editor, plan.edits, false);
     if (inserted && typeof plan.cursorOffset == 'number') {
         let newPosition = editor.document.positionAt(plan.cursorOffset);
         editor.selection = new vscode.Selection(newPosition, newPosition);
@@ -969,6 +972,7 @@ export function activate(context: vscode.ExtensionContext) {
                 }
 
                 if (activeEditor && e.document == activeEditor.document && isPlainEnterChange(mainChange)) {
+                    if (e.reason) return;
                     void recoverSmartEnterAfterPlainEnter(
                         activeEditor, mainChange,
                         e.contentChanges.length == 1 ? states?.previous : undefined,

@@ -22,7 +22,7 @@ if (require.main === module) {
     const root = path.resolve(__dirname, '..');
     const version = require('../package.json').version;
     const notes = getReleaseNotes(readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'), version, process.argv[2]);
-    const output = path.join(root, 'dist', 'release-notes.md');
+    const output = path.join(root, 'tmp', 'release-notes.md');
     mkdirSync(path.dirname(output), { recursive: true });
     writeFileSync(output, notes, 'utf8');
     console.log('Release notes written to ' + output);

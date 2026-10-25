@@ -1,8 +1,10 @@
 import type { LatexDocumentSnapshot } from './latexDocumentState';
+import { getAlignmentColumnCompletion } from './latexColumns';
 import {
   findLatexCommentStart,
   getLatexContext,
   LatexContextOptions,
+  resolveLatexContextOptions,
 } from './latexContext';
 
 export {
@@ -105,14 +107,19 @@ export function getSmartEnterPlan(
   text: string,
   offset: number,
   options: LatexContextOptions = {},
-  snapshot?: LatexDocumentSnapshot
+  snapshot?: LatexDocumentSnapshot,
+  completeAlignmentColumns = false,
+  eol?: '\n' | '\r\n'
 ): SmartEnterPlan {
   let context = getLatexContext(text, offset, options, snapshot);
-  if (!context.canSmartEnter) {
+  if (!context.canSmartEnter && !(completeAlignmentColumns && context.canSmartTab)) {
     return { handled: false, edits: [] };
   }
 
   let lineBounds = getLineBounds(text, offset);
+  const hasCarriageReturn = text[lineBounds.end] == '\n' && text[lineBounds.end - 1] == '\r';
+  const newline = eol ?? (completeAlignmentColumns && (hasCarriageReturn || text[lineBounds.start - 2] == '\r') ? '\r\n' : '\n');
+  if ((completeAlignmentColumns || eol !== undefined) && hasCarriageReturn) lineBounds.end--;
   let line = text.substring(lineBounds.start, lineBounds.end);
   let column = offset - lineBounds.start;
   let commentStart = findLatexCommentStart(line);
@@ -126,35 +133,51 @@ export function getSmartEnterPlan(
     return { handled: false, edits: [] };
   }
 
-  if (!shouldAppendMathLineBreak(line)) {
-    return { handled: false, edits: [] };
-  }
-
   let indent = getLineIndent(line);
   let formulaEnd = line.substring(0, formulaLimit).replace(/\s+$/, '').length;
+  const existingBreak = line.slice(0, formulaEnd).match(/(?:\\\\|\\tabularnewline)\*?(?:\[[^\]]*\])?$/);
+  const frame = context.currentEnvironmentFrame;
+  let missing = 0;
+  let columnSpecEdit: TextEdit | undefined;
+  if (completeAlignmentColumns && context.canSmartTab && frame &&
+      resolveLatexContextOptions(options).alignmentEnvironments.includes(frame.name)) {
+    const bodyEnd = existingBreak ? line.slice(0, existingBreak.index).trimEnd().length : formulaEnd;
+    ({ missing, columnSpecEdit } = getAlignmentColumnCompletion(text, lineBounds.start + bodyEnd, frame, snapshot));
+  }
+  if (completeAlignmentColumns && existingBreak) {
+    if (!missing && !columnSpecEdit) return { handled: false, edits: [] };
+    formulaEnd = line.slice(0, existingBreak.index).trimEnd().length;
+  } else if (!shouldAppendMathLineBreak(line)) {
+    return { handled: false, edits: [] };
+  }
+  const completedBreak = ' &'.repeat(missing) + ' ' +
+    (completeAlignmentColumns && existingBreak ? existingBreak[0] : '\\\\');
+  const declarationEdits = columnSpecEdit ? [columnSpecEdit] : [];
+  const declarationDelta = columnSpecEdit ? columnSpecEdit.text.length - (columnSpecEdit.end - columnSpecEdit.start) : 0;
 
   if (commentStart == -1) {
     let replaceStart = lineBounds.start + formulaEnd;
-    let insertText = ' ' + '\\\\' + '\n' + indent;
+    let insertText = completedBreak + newline + indent;
     return {
       handled: true,
-      edits: [{ start: replaceStart, end: lineBounds.end, text: insertText }],
-      cursorOffset: replaceStart + insertText.length,
+      edits: [...declarationEdits, { start: replaceStart, end: lineBounds.end, text: insertText }],
+      cursorOffset: replaceStart + insertText.length + declarationDelta,
     };
   }
 
   let replaceStart = lineBounds.start + formulaEnd;
   let replaceEnd = lineBounds.start + commentStart;
-  let insertText = ' ' + '\\\\' + ' ';
-  let lineBreakText = '\n' + indent;
+  let insertText = completedBreak + ' ';
+  let lineBreakText = newline + indent;
 
   return {
     handled: true,
     edits: [
+      ...declarationEdits,
       { start: replaceStart, end: replaceEnd, text: insertText },
       { start: lineBounds.end, end: lineBounds.end, text: lineBreakText },
     ],
-    cursorOffset: lineBounds.end + insertText.length - (replaceEnd - replaceStart) + lineBreakText.length,
+    cursorOffset: lineBounds.end + insertText.length - (replaceEnd - replaceStart) + lineBreakText.length + declarationDelta,
   };
 }
 
@@ -163,9 +186,11 @@ export function getSmartEnterRecoveryPlan(
   offsetBeforeEnter: number,
   currentText: string,
   options: LatexContextOptions = {},
-  snapshot?: LatexDocumentSnapshot
+  snapshot?: LatexDocumentSnapshot,
+  completeAlignmentColumns = false,
+  eol?: '\n' | '\r\n'
 ): SmartEnterPlan {
-  let desiredPlan = getSmartEnterPlan(beforeEnterText, offsetBeforeEnter, options, snapshot);
+  let desiredPlan = getSmartEnterPlan(beforeEnterText, offsetBeforeEnter, options, snapshot, completeAlignmentColumns, eol);
   if (!desiredPlan.handled || typeof desiredPlan.cursorOffset != 'number') {
     return { handled: false, edits: [] };
   }

@@ -179,7 +179,7 @@ a &= b \\
 
 - 当前行为空。
 - 当前行只有 `\begin{...}` 或 `\end{...}`。
-- 当前行已经以 `\\` 结尾。
+- 当前行已经以 `\\` 结尾且无需补齐列。
 - 光标右侧还有非空内容。
 
 在矩阵类环境中，按 Tab 会插入 ` & `，用于快速切换到下一列：
@@ -214,11 +214,34 @@ Windows 本地扩展会自动读取当前文件生效的字体、字号、字重
 
 设置立即生效，并取消尚未执行的对齐；智能 Tab 插入 ` & ` 和智能 Enter 仍可使用。
 
-只修改分隔处的空格，保留缩进、单元格内容和注释文字；`\&`、`\%`、花括号参数内的符号及一元正负号不参与对齐。独立注释行、代码块、verbatim 内容和包含嵌套环境边界的行保持原样，内层环境单独对齐。环境需要有匹配的 `\begin`／`\end`，且数据行独占源码行。自动对齐与触发它的编辑合并撤销，撤销／重做本身不触发对齐。
+空格对齐只修改分隔处的空格，保留缩进、单元格内容和注释文字；`\&`、`\%`、花括号参数内的符号及一元正负号不参与对齐。独立注释行、代码块、verbatim 内容和包含嵌套环境边界的行保持原样，内层环境单独对齐。空格对齐需要有匹配的 `\begin`／`\end`，且数据行独占源码行。自动对齐与触发它的编辑合并撤销，撤销／重做本身不触发对齐。
+
+自动对齐开启时，单光标在数据行末按 Enter 还会补齐当前行缺少的 `&`。优先参照同一环境中其他有效数据行的最大列数，当前行列数更多时也会提高目标；没有可用的多列参考行时，才使用表格声明的列数。例如在下面的 `D` 后按 Enter：
+
+```tex
+\begin{tabular}{lc}
+  A & B & C \\
+  D
+\end{tabular}
+```
+
+会补齐为空单元格，并将两列声明扩展成三列；新增列默认左对齐 `l`：
+
+```tex
+\begin{tabular}{lcl}
+  A & B & C \\
+  D & & \\
+
+\end{tabular}
+```
+
+已有 `l/c/r` 等列样式保留，列格式只扩展、不缩减；例如 `|lc|` 扩展为 `|lcl|`。支持 `p/m/b{宽度}`、`X`、静态 `*{数量}{格式}` 及常见列修饰。`\multicolumn{数量}{格式}{内容}` 按占用列数计算，转义 `\&`、注释、花括号内容和嵌套环境中的分隔符不计入外层行。
+
+已有行尾 `\\`、`\\*`、`\\[间距]` 的缺列行也能补齐，尾注释留在原行，光标进入新行；补列、列格式扩展和换行可一起撤销。不会删除已有的多余分隔符，也不会批量改写其他行。未知自定义列类型、动态列数或无法可靠解析的结构会跳过补列和声明修改。关闭 `hsnips.autoAlign.enabled` 会同时关闭这两项新增行为。
 
 如果修改或本地编译后按键行为没有变化，先执行 `npm run compile`，然后在 VS Code / Cursor 中运行 `Developer: Reload Window`。按键绑定和 `out/` 编译产物都需要重新加载后才会被当前扩展实例使用。
 
-Enter 逻辑同时带有文档变更兜底：如果其他扩展或编辑器模式先把 Enter 处理成了普通换行，扩展会在换行后立即检查上一行并补上缺失的 `\\`。
+Enter 逻辑同时带有文档变更兜底：如果其他扩展或编辑器模式先把 Enter 处理成了普通换行，扩展会在换行后立即检查上一行并补上缺失的 `\\`；开启自动对齐时，同样执行补列和列格式扩展。
 
 ## 环境转换
 
@@ -302,9 +325,9 @@ npm run compile
 - `npm run package`：生成 `dist/vscode-hypersnips-<version>.vsix`。
 - `npm run test:integration`：在独立用户数据、扩展、工作区及虚构片段目录中运行真实 VS Code 宿主测试。
 - `npm run package:performance`：从干净工作树生成带提交短哈希的性能试用包。
-- `npm run release:notes -- v<version>`：校验标签版本并生成 `dist/release-notes.md`，仅供预览，不执行发布。
+- `npm run release:notes -- v<version>`：校验标签版本并生成 `tmp/release-notes.md`，仅供预览，不执行发布。
 
-目录按职责组织：`src/` 为扩展源码，`test/` 为测试和 fixture，`scripts/` 为构建脚本，`images/` 为图标资源。测试放在 `src/` 中也能工作；本项目将它们独立出来，避免进入扩展编译产物。`out/`、`.test-out/` 和 `dist/` 分别存放扩展编译结果、测试编译结果和安装包，均不提交 Git；测试和构建文件不打入 VSIX。
+目录按职责组织：`src/` 为扩展源码，`test/` 为测试和 fixture，`scripts/` 为构建脚本，`images/` 为图标资源。`out/` 存放随插件分发的运行代码，`dist/` 存放正式安装包；测试编译结果、测试会话、下载缓存、日志、临时脚本及中间文件统一放在 `tmp/`，不在项目根目录散落生成过程文件。这些生成目录均不提交 Git，`tmp/`、测试和构建脚本不打入 VSIX。
 
 Snippet Manager 使用 `monaco-editor` 的精简运行时资源。`vsce package` 会先运行 `npm run prepare-monaco`，只复制 Monaco editor core、worker、字体和语言包到 `media/monaco`，避免把整个 `node_modules/monaco-editor` 打进 VSIX。
 
@@ -342,7 +365,7 @@ git tag -a v0.1.5 -m "Release v0.1.5"
 git push origin v0.1.5
 ```
 
-标签必须与 `package.json` 的版本一致，且 CHANGELOG 中必须有唯一、带日期、包含更新条目的对应章节。工作流提取该章节到 `dist/release-notes.md`，随 VSIX artifact 传递给发布任务，再用 `gh release create --notes-file` 将标题、分类和条目直接展示在 GitHub Release 正文中。未发布内容和其他版本不会混入正文，验证、测试或打包失败均不会发布。
+标签必须与 `package.json` 的版本一致，且 CHANGELOG 中必须有唯一、带日期、包含更新条目的对应章节。工作流提取该章节到 `tmp/release-notes.md`，通过独立的说明 artifact 传递给发布任务，再用 `gh release create --notes-file` 将标题、分类和条目直接展示在 GitHub Release 正文中。未发布内容和其他版本不会混入正文，验证、测试或打包失败均不会发布。
 
 `CHANGELOG.md` 随 VSIX 分发，生成的说明文件、测试及构建脚本不进入扩展。流程仅由 `v<version>` 标签触发 GitHub Release，使用 GitHub 提供的 `GITHUB_TOKEN`，无需另配发布密钥；不会发布到 VS Code Marketplace。不要重用或移动已有的 `v0.1.4` 标签。
 
