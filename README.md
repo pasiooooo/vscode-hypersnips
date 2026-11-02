@@ -28,6 +28,10 @@ vscode-hypersnips 是一个面向 VS Code 的 LaTeX 数学公式 snippet 扩展�
 - 支持 `${VISUAL}`，可把最近选中的文本带入 snippet。
 - 为 `.hsnips` 文件提供语法高亮。
 
+自动对齐的列数以当前编辑行为基准，并以所有行中最后一个有内容的列为下限；因此可以删除多余的尾部空 `&`，其他行会同步移除空列。有内容的列不会因另一行少写了 `&` 而消失。已有 `l/c/r` 等列格式保留，确需更多列时追加 `l`；第一次建立表格时 Enter 仍可依据列声明补齐。
+
+多行单元格目前保留人工排版；新的共享列位置方案及单格、多格混合、全部多行的示例见[多行对齐设计提案](docs/multiline-alignment-design.md)，尚未启用。
+
 ## 快速开始
 
 1. 在命令面板运行 `vscode-hypersnips: Open Snippets Directory`。

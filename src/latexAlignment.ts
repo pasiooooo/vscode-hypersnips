@@ -7,7 +7,7 @@ import {
   sanitizeLatexForParsing,
 } from './latexContext';
 import { findLatexEnvironmentPairAt } from './environmentConvert';
-import { TextEdit, applyTextEditsToString } from './latexEdit';
+import { TextEdit } from './latexEdit';
 import { AlignmentStructure, getAlignmentColumnEdits, getAlignmentStructure } from './latexColumns';
 
 interface Anchor {
@@ -300,46 +300,54 @@ export function getAutoAlignmentEdits(
   const pair = findLatexEnvironmentPairAt(text, offset, options, snapshot);
   if (!pair || !resolveLatexContextOptions(options).alignmentEnvironments.includes(pair.name)) return [];
   const structure = getAlignmentStructure(text, pair, snapshot);
-  const columns = structure ? getAlignmentColumnEdits(structure) : [];
+  const columns = structure ? getAlignmentColumnEdits(structure, offset) : [];
   if (!columns.length) return getAlignmentEdits(text, offset, options, tabSize, characterWidths, snapshot, structure);
 
-  const parts: string[] = [];
-  let cursor = 0, delta = 0;
-  const blocks = columns.map((edit) => {
-    parts.push(text.slice(cursor, edit.start), edit.text);
+  // Source anchors compose insertions, deletions and whitespace changes without overlapping edits.
+  type Piece = { text: string; source?: number };
+  const pieces: Piece[] = [];
+  let cursor = 0;
+  for (const edit of columns) {
+    if (cursor < edit.start) pieces.push({ text: text.slice(cursor, edit.start), source: cursor });
+    if (edit.text) pieces.push({ text: edit.text });
     cursor = edit.end;
-    const start = edit.start + delta;
-    delta += edit.text.length;
-    return { start, end: start + edit.text.length, edits: [] as TextEdit[], suffix: '' };
-  });
-  parts.push(text.slice(cursor));
-  const expanded = parts.join('');
+  }
+  if (cursor < text.length) pieces.push({ text: text.slice(cursor), source: cursor });
+  const expanded = pieces.map((piece) => piece.text).join('');
   const whitespace = getAlignmentEdits(expanded, mapAlignmentOffset(offset, columns), options, tabSize, characterWidths);
-  const result = columns.map((edit) => ({ ...edit }));
-  let index = 0;
-  delta = 0;
+  const formatted: Piece[] = [];
+  let index = 0, within = 0, position = 0;
+  function consume(end: number, retain: boolean) {
+    while (position < end && index < pieces.length) {
+      const piece = pieces[index];
+      const length = Math.min(end - position, piece.text.length - within);
+      if (retain) formatted.push({ text: piece.text.slice(within, within + length),
+        source: piece.source === undefined ? undefined : piece.source + within });
+      position += length;
+      within += length;
+      if (within === piece.text.length) { index++; within = 0; }
+    }
+  }
   for (const edit of whitespace) {
-    while (index < blocks.length && blocks[index].end < edit.start) {
-      delta += columns[index++].text.length;
-    }
-    const block = blocks[index];
-    if (block && edit.start < block.start && edit.end > block.start && edit.end <= block.end) {
-      // A control-space can merge original whitespace with the insertion's leading padding.
-      result[index].start = edit.start - delta;
-      block.edits.push({ start: 0, end: edit.end - block.start, text: edit.text });
-    } else if (block && edit.start >= block.start && edit.end <= block.end) {
-      block.edits.push({ start: edit.start - block.start, end: edit.end - block.start, text: edit.text });
-    } else {
-      const shift = delta + (block && edit.start >= block.end ? columns[index].text.length : 0);
-      if (block && edit.start === block.end) {
-        // Right padding may span the end of an inserted column and the original whitespace.
-        result[index].end = edit.end - shift;
-        block.suffix = edit.text;
-      } else result.push({ start: edit.start - shift, end: edit.end - shift, text: edit.text });
+    consume(edit.start, true);
+    consume(edit.end, false);
+    if (edit.text) formatted.push({ text: edit.text });
+  }
+  consume(expanded.length, true);
+  const result: TextEdit[] = [];
+  cursor = 0;
+  let replacement = '';
+  function flush(end: number) {
+    if (text.slice(cursor, end) !== replacement) result.push({ start: cursor, end, text: replacement });
+    replacement = '';
+  }
+  for (const piece of formatted) {
+    if (piece.source === undefined) replacement += piece.text;
+    else {
+      flush(piece.source);
+      cursor = piece.source + piece.text.length;
     }
   }
-  for (let i = 0; i < columns.length; i++) {
-    result[i].text = applyTextEditsToString(columns[i].text, blocks[i].edits) + blocks[i].suffix;
-  }
-  return result.sort((a, b) => a.start - b.start);
+  flush(text.length);
+  return result;
 }

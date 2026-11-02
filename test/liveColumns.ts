@@ -16,6 +16,45 @@ function synchronize(text: string) {
   return result;
 }
 
+for (const [source, expected] of [
+  ['a & b & \\\\\nc & d| \\\\', 'a&b\\\\\nc&d\\\\'],
+  ['a & b & value \\\\\nc & d| \\\\', 'a&b&value\\\\\nc&d&\\\\'],
+  ['a & & value & \\\\\nc & d &| \\\\', 'a&&value\\\\\nc&d&\\\\'],
+  ['a & b \\\\\nc & d &| \\\\', 'a&b&\\\\\nc&d&\\\\'],
+  [' & & \\\\\n| \\\\', '\\\\\n\\\\'],
+  [' & & \\\\\n\\midrule\n| \\\\', '\\\\\n\\midrule\n\\\\'],
+  ['a & \\text{b & c} & \\\\\nd & e| \\\\', 'a&\\text{b&c}\\\\\nd&e\\\\'],
+  ['a & b\\&c & \\\\\nd & e| \\\\', 'a&b\\&c\\\\\nd&e\\\\'],
+  ['a & $b & c$ & \\\\\nd & e| \\\\', 'a&$b&c$\\\\\nd&e\\\\'],
+  ['\\multicolumn{3}{c}{value} & \\\\\nc & d| \\\\', '\\multicolumn{3}{c}{value}\\\\\nc&d&\\\\'],
+  ['a & \\[\nx+y\n\\] & \\\\\nc & d| \\\\', 'a&\\[\nx+y\n\\]\\\\\nc&d\\\\'],
+  ['a & b & \\\\ % & ignored\nc & d| \\\\', 'a&b\\\\%&ignored\nc&d\\\\'],
+  ['a & b & \\\\\nc & d| \\label{eq:demo} \\\\', 'a&b\\\\\nc&d\\label{eq:demo}\\\\'],
+] as const) {
+  const marked = '\\begin{tabular}{lll}\n' + source + '\n\\end{tabular}';
+  const offset = marked.indexOf('|'), text = marked.replace('|', '');
+  const edits = getAutoAlignmentEdits(text, offset, {}, 4, new Map(), new LatexDocumentState(text));
+  for (let i = 1; i < edits.length; i++) assert.ok(edits[i - 1].end <= edits[i].start);
+  const result = applyTextEditsToString(text, edits);
+  assert.strictEqual(result.split('\n').slice(1, -1).join('\n').replace(/[ \t]/g, ''), expected,
+    'active-row empty columns follow the edit without removing occupied columns');
+  const mapped = mapAlignmentOffset(offset, edits);
+  assert.deepStrictEqual(getAutoAlignmentEdits(result, mapped), [], 'shrinking and growing are stable');
+}
+
+for (const peer of ['a', '']) {
+  const text = '\\begin{tabular}{lll}\n  ' + peer + ' \\\\\n  b\n\\end{tabular}';
+  const offset = text.indexOf('\n  b') + 4;
+  const enter = getSmartEnterPlan(text, offset, {}, new LatexDocumentState(text), true);
+  assert.ok(enter.handled);
+  assert.ok(!applyTextEditsToString(text, enter.edits).includes('&'), 'Enter keeps an existing one-column table');
+}
+{
+  const caption = '\\begin{longtable}{ll}\n\\caption{Demo}\n\\\\\n a & b \\\\\n c & d & \\\\\n\\end{longtable}';
+  const changed = applyTextEditsToString(caption, getAutoAlignmentEdits(caption, caption.indexOf('a &')));
+  assert.match(changed, /\\caption\{Demo\}\n[ \t]*\\\\/, 'caption-only rows never receive extra columns');
+}
+
 for (const eol of ['\n', '\r\n']) {
   const source = '\\begin{tabular}{@{}lc@{}}\n  a & b & c \\\\\n  d & e \\\\\n\\end{tabular}'.replace(/\n/g, eol);
   const expected = '\\begin{tabular}{@{}lcl@{}}\n  a & b & c \\\\\n  d & e &   \\\\\n\\end{tabular}'.replace(/\n/g, eol);
@@ -74,12 +113,13 @@ let seed = 713;
 const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32;
 for (let attempt = 0; attempt < 120; attempt++) {
   const rows = Array.from({ length: 2 + Math.floor(random() * 5) }, (_, row) => '  ' +
-    Array.from({ length: 1 + Math.floor(random() * 8) }, (_, col) => `r${row}c${col}`).join(' & ') + ' \\\\ % note');
+    Array.from({ length: 1 + Math.floor(random() * 8) }, (_, col) =>
+      col && random() < 0.6 ? '' : `r${row}c${col}`).join(' & ') + ' \\\\ % note');
   const text = '\\begin{tabular}{|lc|}\n' + rows.join('\n') + '\n\\end{tabular}';
-  const offset = text.indexOf('r0c0');
+  const offset = text.indexOf(`r${attempt % rows.length}c0`);
   const state = new LatexDocumentState(text);
   const structure = getAlignmentStructure(text, state.contextAt(offset).currentEnvironmentFrame!, state)!;
-  const columns = getAlignmentColumnEdits(structure);
+  const columns = getAlignmentColumnEdits(structure, offset);
   const expanded = applyTextEditsToString(text, columns);
   const widths = new Map([['r', 1.3], ['0', 0.7]]);
   const expected = applyTextEditsToString(expanded, getAlignmentEdits(expanded, mapAlignmentOffset(offset, columns), {}, 4, widths));

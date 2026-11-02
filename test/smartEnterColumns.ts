@@ -57,8 +57,8 @@ check(String.raw`\begin{tabular}{ccc}
   <cursor>
 \end{tabular}`);
 for (const suffix of ['\\\\', '\\\\*', '\\\\[2pt]', '\\\\*[2pt]', '\\tabularnewline', '\\tabularnewline[2pt]']) {
-  check(`\\begin{tabular}{ccc}\n  Alpha ${suffix}<cursor> % note\n\\end{tabular}`,
-    `\\begin{tabular}{ccc}\n  Alpha & & ${suffix} % note\n  <cursor>\n\\end{tabular}`);
+  check(`\\begin{tabular}{ccc}\n  A & B & C \\\\\n  Alpha ${suffix}<cursor> % note\n\\end{tabular}`,
+    `\\begin{tabular}{ccc}\n  A & B & C \\\\\n  Alpha & & ${suffix} % note\n  <cursor>\n\\end{tabular}`);
 }
 check(String.raw`\begin{matrix}
   a & b & c \\

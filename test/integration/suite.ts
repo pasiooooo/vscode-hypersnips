@@ -89,6 +89,49 @@ export async function run() {
     await vscode.commands.executeCommand('undo');
     await until(() => editor.document.getText() === before, 'live column synchronization joins the triggering edit undo');
   });
+  await test('deleting a trailing empty column shrinks peers and remains undoable', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  a & b & \\\\\n  c & d &| \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await vscode.commands.executeCommand('deleteLeft');
+    const expected = '\\begin{tabular}{lll}\n  a & b \\\\\n  c & d \\\\\n\\end{tabular}';
+    const compact = (value: string) => value.replace(/[ \t]/g, '');
+    await until(() => compact(editor.document.getText()) === compact(expected), 'deleted empty column stays deleted in every row');
+    const after = editor.document.getText();
+    await delay(400);
+    assert.strictEqual(editor.document.getText(), after);
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'one undo restores empty columns');
+    await vscode.commands.executeCommand('redo');
+    await until(() => editor.document.getText() === after, 'redo shrinks empty columns again');
+  });
+  await test('deleting to one column survives later typing and Enter', async () => {
+    const editor = await openMarked('\\begin{tabular}{ll}\n  a & \\\\\n  b &| \\\\\n\\end{tabular}');
+    await configure(true);
+    await vscode.commands.executeCommand('deleteLeft');
+    await until(() => !editor.document.getText().includes('&'), 'all empty second columns are removed');
+    const row = editor.document.getText().indexOf('\n  b') + 3;
+    editor.selection = new vscode.Selection(editor.document.positionAt(row + 1), editor.document.positionAt(row + 1));
+    await vscode.commands.executeCommand('type', { text: 'x' });
+    await until(() => editor.document.getText().includes('bx'), 'typing after deletion');
+    await delay(400);
+    assert.ok(!editor.document.getText().includes('&'));
+    const end = editor.document.lineAt(editor.selection.active.line).range.end;
+    editor.selection = new vscode.Selection(end, end);
+    const version = editor.document.version;
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.document.version > version, 'Enter after a completed one-column row');
+    await delay(400);
+    assert.ok(!editor.document.getText().includes('&'), 'the declaration does not restore deleted empty columns');
+  });
+  await test('an empty completed one-column peer also prevents declaration-based refill', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  \\\\\n  b|\n\\end{tabular}');
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.document.getText().includes('b \\\\'), 'the current one-column row is completed');
+    await delay(400);
+    assert.ok(!editor.document.getText().includes('&'), 'empty completed peers establish the same one-column width');
+  });
   await test('column synchronization preserves a TeX control-space and uses a valid edit batch', async () => {
     const editor = await openMarked('\\begin{tabular}{lll}\n  X| & Y & Z \\\\\n  a\\  \\\\\n\\end{tabular}');
     const before = editor.document.getText();

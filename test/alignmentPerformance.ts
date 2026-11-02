@@ -147,7 +147,7 @@ async function testAffectedEnvironments() {
     offsetAt: (offset: number) => offset, positionAt: (offset: number) => offset,
   };
   const editor = {
-    document, options: { tabSize: 4 }, selections: [],
+    document, options: { tabSize: 4 }, selection: { active: 0 }, selections: [],
     edit: async () => { editCalls++; return true; },
   };
   const vscode = {

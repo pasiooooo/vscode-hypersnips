@@ -8,7 +8,11 @@ const MAX_SPEC_DEPTH = 16;
 const TABLES = new Set(['array', 'tabular', 'tabular*', 'tabularx', 'longtable']);
 
 interface Group { value: string; end: number }
-interface Row { start: number; end: number; dataStart?: number; bodyEnd: number; columns: number; valid: boolean; content: boolean; complete: boolean }
+interface Row {
+  start: number; end: number; dataStart?: number; bodyEnd: number; columns: number;
+  occupiedColumns: number; separators: { start: number; column: number }[];
+  valid: boolean; content: boolean; complete: boolean; nonData: boolean; controlEnd: number;
+}
 
 function skipSpace(text: string, start: number) {
   while (/\s/.test(text[start] || '')) start++;
@@ -99,16 +103,23 @@ function scanRows(text: string, start: number, name: string) {
   const rows: Row[] = [];
   const nested: string[] = [];
   let rowStart = start, columns = 1, valid = true, content = false, cellContent = false;
+  let occupiedColumns = 0, separators: Row['separators'] = [], nonData = false, controlEnd = 0, caption = false;
   let dataStart: number | undefined, bodyEnd = start, mathEnd: string | undefined;
   function touch(start: number, end: number) {
     dataStart ??= start;
     bodyEnd = end;
     content = true;
   }
+  function occupy() {
+    cellContent = true;
+    occupiedColumns = Math.max(occupiedColumns, columns);
+  }
   function finish(end: number, complete: boolean) {
-    rows.push({ start: rowStart, end, dataStart, bodyEnd, columns,
+    rows.push({ start: rowStart, end, dataStart, bodyEnd, columns, occupiedColumns, separators, controlEnd,
+      nonData: caption || (nonData && !/[\r\n]/.test(text.slice(controlEnd, end))),
       valid: valid && nested.length === 0 && !mathEnd, content, complete });
     columns = 1; valid = true; content = false; cellContent = false;
+    occupiedColumns = 0; separators = []; nonData = false; controlEnd = 0; caption = false;
     dataStart = undefined;
   }
   for (let index = start; index < text.length;) {
@@ -117,7 +128,7 @@ function scanRows(text: string, start: number, name: string) {
     if (char === '{') {
       const group = groupAt(text, index);
       if (!group) { valid = false; break; }
-      if (!nested.length) { touch(index, group.end); cellContent = true; }
+      if (!nested.length) { touch(index, group.end); occupy(); }
       index = group.end;
       continue;
     }
@@ -127,7 +138,7 @@ function scanRows(text: string, start: number, name: string) {
       if (!mathEnd) mathEnd = delimiter;
       else if (mathEnd === delimiter) mathEnd = undefined;
       touch(index, index + delimiter.length);
-      cellContent = true;
+      occupy();
       index += delimiter.length;
       continue;
     }
@@ -145,7 +156,7 @@ function scanRows(text: string, start: number, name: string) {
       if (!nested.length && (word === '[' || word === '(')) {
         mathEnd = word === '[' ? ']' : ')';
         touch(commandStart, index);
-        cellContent = true;
+        occupy();
         continue;
       }
       if (word === 'begin' || word === 'end') {
@@ -154,7 +165,7 @@ function scanRows(text: string, start: number, name: string) {
         index = environment.end;
         const environmentName = environment.value.trim();
         if (word === 'begin') {
-          if (!nested.length) { touch(commandStart, index); cellContent = true; }
+          if (!nested.length) { touch(commandStart, index); occupy(); }
           nested.push(environmentName);
         } else if (nested.length) {
           if (nested.pop() !== environmentName) valid = false;
@@ -191,7 +202,11 @@ function scanRows(text: string, start: number, name: string) {
         rowStart = index;
         continue;
       }
-      if (/^(?:hline|endfirsthead|endhead|endfoot|endlastfoot|morecmidrules)$/.test(word)) continue;
+      if (/^(?:hline|endfirsthead|endhead|endfoot|endlastfoot|morecmidrules)$/.test(word)) {
+        nonData = true;
+        if (!content) controlEnd = index;
+        continue;
+      }
       if (/^(?:toprule|midrule|bottomrule|addlinespace|cmidrule)$/.test(word)) {
         let next = skipSpace(text, index);
         if (text[next] === '[') {
@@ -210,10 +225,14 @@ function scanRows(text: string, start: number, name: string) {
           if (!range) valid = false;
           else index = range.end;
         }
+        nonData = true;
+        if (!content) controlEnd = index;
         continue;
       }
       if (/^(?:cline|noalign|label|caption\*?|specialrule)$/.test(word)) {
+        nonData = true;
         if (word === 'caption' || word === 'caption*') {
+          caption = true;
           const optional = optionalPosition(text, index);
           if (optional === undefined) valid = false;
           else index = optional;
@@ -223,6 +242,8 @@ function scanRows(text: string, start: number, name: string) {
           if (!argument) { valid = false; break; }
           index = argument.end;
         }
+        if (!content) controlEnd = index;
+        if (word === 'label' && content) { touch(commandStart, index); occupy(); }
         continue;
       }
       if (/^(?:span|omit|multispan|cr)$/.test(word)) valid = false;
@@ -236,14 +257,16 @@ function scanRows(text: string, start: number, name: string) {
         index = body?.end ?? format?.end ?? span?.end ?? index;
       }
       touch(commandStart, index);
-      cellContent = true;
+      occupy();
       if (columns > MAX_COLUMNS) valid = false;
       continue;
     }
     if (!nested.length) {
       touch(index, index + 1);
-      if (char === '&' && !mathEnd) { columns++; cellContent = false; }
-      else cellContent = true;
+      if (char === '&' && !mathEnd) {
+        separators.push({ start: index, column: columns });
+        columns++; cellContent = false;
+      } else occupy();
       if (columns > MAX_COLUMNS) valid = false;
     }
     index++;
@@ -267,16 +290,30 @@ export function getAlignmentStructure(
 
 export type AlignmentStructure = NonNullable<ReturnType<typeof getAlignmentStructure>>;
 
-export function getAlignmentColumnEdits(structure: AlignmentStructure): TextEdit[] {
+export function getAlignmentColumnEdits(structure: AlignmentStructure, offset?: number): TextEdit[] {
   if (!structure.closed) return [];
-  const rows = structure.rows.filter((row) => row.valid && row.content);
+  const rows = structure.rows.filter((row) => row.valid && (row.content || (row.complete && !row.nonData)));
   if (!rows.length) return [];
   const widest = rows.reduce((width, row) => Math.max(width, row.columns), 0);
-  const expected = widest > 1 ? widest : structure.declared.columns || widest;
+  const position = offset === undefined ? undefined : offset - structure.base;
+  const active = position === undefined ? undefined : rows.find((row) =>
+    row.start <= position && position <= row.end && position >= row.controlEnd && (row.content || row.complete));
+  const occupied = rows.reduce((width, row) => Math.max(width, row.occupiedColumns), 1);
+  // Empty tails follow the active row; real content, including spans, sets the minimum width.
+  const expected = Math.max(occupied, active?.columns ?? widest);
   const edits = rows.filter((row) => row.complete && row.columns < expected).map((row) => ({
-    start: structure.base + row.bodyEnd, end: structure.base + row.bodyEnd,
+    start: structure.base + (row.content ? row.bodyEnd : row.end),
+    end: structure.base + (row.content ? row.bodyEnd : row.end),
     text: ' &'.repeat(expected - row.columns),
   }));
+  for (const row of rows) {
+    for (const separator of row.separators) {
+      if (separator.column >= expected) {
+        const start = structure.base + separator.start;
+        edits.push({ start, end: start + 1, text: '' });
+      }
+    }
+  }
   const { columns, appendOffset } = structure.declared;
   if (columns && appendOffset !== undefined && expected > columns) {
     const start = structure.base + appendOffset;
@@ -308,7 +345,9 @@ export function getAlignmentColumnCompletion(
       peerColumns = Math.max(peerColumns, row.columns);
     }
   }
-  const expected = Math.max(current.columns, peerColumns > 1 ? peerColumns : declared.columns || 0);
+  const completed = rows.some((row) => row.valid && row.complete && (row.content || !row.nonData));
+  // The declaration only seeds a new table; it must not resurrect deleted columns in existing rows.
+  const expected = Math.max(current.columns, peerColumns || (completed ? 0 : declared.columns || 0));
   let columnSpecEdit: TextEdit | undefined;
   if (declared.appendOffset !== undefined && declared.columns && expected > declared.columns) {
     const start = frame.beginEnd + declared.appendOffset;

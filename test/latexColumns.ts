@@ -78,7 +78,7 @@ for (const snapshot of [false, true]) {
     [String.raw`\begin{matrix} a&b\\ \hline first|\end{matrix}`, 1],
     [String.raw`\begin{matrix} a&b&c\\ first & second|\\ x&y\\\end{matrix}`, 1],
     [String.raw`\begin{tabular}{ccc} first| \\[2pt] % note
-\end{tabular}`, 2],
+\end{tabular}`, 0], // An existing one-column row must not restore deleted empty columns from its declaration.
     [String.raw`\begin{tabular}{cc} first| % & ignored
 \end{tabular}`, 1],
     [String.raw`\begin{tabular}{c% format comment

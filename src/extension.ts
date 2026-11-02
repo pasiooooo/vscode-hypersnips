@@ -258,8 +258,11 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
         if (!requestIsCurrent()) return;
         let tabSize = typeof editor.options.tabSize == 'number' ? editor.options.tabSize : 4;
         let edits = new Map<number, TextEdit>();
-        for (let { offset } of environments.values()) {
-            for (let edit of getAutoAlignmentEdits(text, offset, options, tabSize, characterWidths, snapshot)) {
+        const activeOffset = editor.document.offsetAt(editor.selection.active);
+        const activePair = snapshot.environmentPairAt(activeOffset);
+        for (let { offset, beginEnd, endStart } of environments.values()) {
+            const rowOffset = activeOffset >= beginEnd && activeOffset <= endStart && activePair?.beginEnd == beginEnd ? activeOffset : offset;
+            for (let edit of getAutoAlignmentEdits(text, rowOffset, options, tabSize, characterWidths, snapshot)) {
                 edits.set(edit.start, edit);
             }
         }
