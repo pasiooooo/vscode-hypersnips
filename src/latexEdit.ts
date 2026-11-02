@@ -1,5 +1,5 @@
 import type { LatexDocumentSnapshot } from './latexDocumentState';
-import { getAlignmentColumnCompletion } from './latexColumns';
+import { getAlignmentColumnCompletion, getAlignmentStructure } from './latexColumns';
 import {
   findLatexCommentStart,
   getLatexContext,
@@ -143,7 +143,15 @@ export function getSmartEnterPlan(
   if (completeAlignmentColumns && context.canSmartTab && frame &&
       resolveLatexContextOptions(options).alignmentEnvironments.includes(frame.name)) {
     const bodyEnd = existingBreak ? line.slice(0, existingBreak.index).trimEnd().length : formulaEnd;
-    ({ missing, columnSpecEdit } = getAlignmentColumnCompletion(text, lineBounds.start + bodyEnd, frame, snapshot));
+    if (['\\]', '\\)', '$', '$$'].includes(line.slice(0, formulaLimit).trim())) return { handled: false, edits: [] };
+    const structure = getAlignmentStructure(text, frame, snapshot);
+    const position = lineBounds.start + bodyEnd - frame.beginEnd;
+    const row = structure?.rows.find((row) => row.start <= position && position <= row.end);
+    if (row && (frame.beginEnd + (row.complete ? row.end : row.bodyEnd) > lineBounds.end ||
+        (!existingBreak && row.dataStart !== undefined && frame.beginEnd + row.dataStart < lineBounds.start))) {
+      return { handled: false, edits: [] };
+    }
+    ({ missing, columnSpecEdit } = getAlignmentColumnCompletion(text, lineBounds.start + bodyEnd, frame, snapshot, structure));
   }
   if (completeAlignmentColumns && existingBreak) {
     if (!missing && !columnSpecEdit) return { handled: false, edits: [] };
@@ -244,15 +252,27 @@ export function getSmartTabPlan(
   const bounds = getLineBounds(text, offset);
   const context = getLatexContext(text, offset, options, snapshot);
   const sanitized = snapshot?.sanitizedText ?? sanitizeLatexForParsing(text);
-  const tokens = /\\(?:begin|end)\s*\{[^}]+\}|\\[a-zA-Z]+\*?|\\[^\r\n]|[{}\[\]&]/g;
+  const tokens = /\\(?:begin|end)\s*\{[^}]+\}|\\[a-zA-Z]+\*?|\\[^\r\n]|\$\$?|[{}\[\]&]/g;
   tokens.lastIndex = context.currentEnvironmentFrame?.beginEnd ?? bounds.start;
   let braces = 0, brackets = 0, nested = 0;
   let rowBreak: number | undefined;
+  let mathEnd: string | undefined;
   let token: RegExpExecArray | null;
-  while ((token = tokens.exec(sanitized)) && token.index < bounds.end) {
+  while ((token = tokens.exec(sanitized))) {
     const symbol = token[0];
+    if (mathEnd) {
+      if (symbol === mathEnd) mathEnd = undefined;
+      continue;
+    }
+    if (symbol === '\\[' || symbol === '\\(' || symbol === '$' || symbol === '$$') {
+      mathEnd = symbol === '\\[' ? '\\]' : symbol === '\\(' ? '\\)' : symbol;
+      continue;
+    }
     if (/^\\begin\b/.test(symbol)) nested++;
-    else if (/^\\end\b/.test(symbol)) nested--;
+    else if (/^\\end\b/.test(symbol)) {
+      if (!nested) break;
+      nested--;
+    }
     else if (/^\\verb\*?$/.test(symbol)) {
       const end = sanitized.indexOf(sanitized[tokens.lastIndex], tokens.lastIndex + 1);
       if (end < 0 || /[\r\n]/.test(sanitized.slice(tokens.lastIndex, end))) return undefined;
@@ -262,7 +282,7 @@ export function getSmartTabPlan(
     else if (symbol === '}') braces--;
     else if (symbol === '[') brackets++;
     else if (symbol === ']') brackets--;
-    else if (!nested && !braces && !brackets && token.index >= bounds.start) {
+    else if (!nested && !braces && !brackets) {
       if (symbol === '&' && token.index >= offset) {
         const after = token.index + 1;
         const edits = text[after] === ' ' ? [] : [{ start: after,
@@ -270,7 +290,9 @@ export function getSmartTabPlan(
         return { edits, cursorOffset: after + 1 };
       }
       if (symbol === '\\\\' || /^\\tabularnewline\*?$/.test(symbol)) {
-        const suffix = /^\*?(?:\[[^\]]*\])?/.exec(sanitized.slice(tokens.lastIndex, bounds.end))![0];
+        if (token.index < bounds.start) continue;
+        const lineEnd = sanitized.indexOf('\n', tokens.lastIndex);
+        const suffix = /^\*?(?:\[[^\]]*\])?/.exec(sanitized.slice(tokens.lastIndex, lineEnd < 0 ? undefined : lineEnd))![0];
         const end = tokens.lastIndex + suffix.length;
         if (offset <= end || !sanitized.slice(end, offset).trim()) {
           rowBreak = token.index;

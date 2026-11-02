@@ -12,13 +12,21 @@ import { findLatexEnvironmentPairAt, findDisplayMathDelimiterAt } from './refere
 function check(state: LatexDocumentState, offsets?: number[]) {
   assert.strictEqual(state.sanitizedText, require('./reference/latexContext').sanitizeLatexForParsing(state.text));
   for (const offset of offsets || Array.from({ length: state.text.length + 1 }, (_, i) => i)) {
-    assert.deepStrictEqual(state.contextAt(offset), getLatexContext(state.text, offset, state.options),
+    const context = edit.getLatexContext(state.text, offset, state.options);
+    const legacyContext = getLatexContext(state.text, offset, state.options);
+    assert.deepStrictEqual(state.contextAt(offset), context,
       `context offset=${offset} text=${JSON.stringify(state.text)}`);
+    // Only smart-key scope changed; all other context fields retain the frozen contract.
+    assert.deepStrictEqual({ ...context, canSmartEnter: legacyContext.canSmartEnter,
+      canSmartTab: legacyContext.canSmartTab, canInsertAlignmentSeparator: legacyContext.canInsertAlignmentSeparator }, legacyContext);
     assert.deepStrictEqual(state.environmentPairAt(offset), findLatexEnvironmentPairAt(state.text, offset, state.options),
       `environment offset=${offset} text=${JSON.stringify(state.text)}`);
     assert.deepStrictEqual(state.displayDelimiterAt(offset), findDisplayMathDelimiterAt(state.text, offset),
       `delimiter offset=${offset} text=${JSON.stringify(state.text)}`);
-    assert.deepStrictEqual(edit.getSmartEnterPlan(state.text, offset, state.options, state), baselineEdit.getSmartEnterPlan(state.text, offset, state.options));
+    assert.deepStrictEqual(edit.getSmartEnterPlan(state.text, offset, state.options, state), edit.getSmartEnterPlan(state.text, offset, state.options));
+    if (context.canSmartEnter === legacyContext.canSmartEnter) {
+      assert.deepStrictEqual(edit.getSmartEnterPlan(state.text, offset, state.options), baselineEdit.getSmartEnterPlan(state.text, offset, state.options));
+    }
     // Tab now navigates existing separators and accepts completed rows; compare both current parsing paths.
     assert.strictEqual(edit.shouldInsertAlignmentSeparator(state.text, offset, state.options, state), edit.shouldInsertAlignmentSeparator(state.text, offset, state.options));
     assert.deepStrictEqual(edit.getSmartTabPlan(state.text, offset, state.options, state), edit.getSmartTabPlan(state.text, offset, state.options));
@@ -27,9 +35,8 @@ function check(state: LatexDocumentState, offsets?: number[]) {
     assert.deepStrictEqual(convert.createUnwrapMathStructurePlan(state.text, offset, state.options, state), baselineConvert.createUnwrapMathStructurePlan(state.text, offset, state.options));
     const widths = new Map([['x', 1.25], ['中', 2.1]]);
     const edits = getAlignmentEdits(state.text, offset, state.options, 4, widths, state);
-    const baselineEdits = baselineAlignment.getAlignmentEdits(state.text, offset, state.options, 4, widths);
-    assert.deepStrictEqual(edits, baselineEdits);
-    assert.strictEqual(mapAlignmentOffset(offset, edits), baselineAlignment.mapAlignmentOffset(offset, baselineEdits));
+    assert.deepStrictEqual(edits, getAlignmentEdits(state.text, offset, state.options, 4, widths));
+    assert.strictEqual(mapAlignmentOffset(offset, edits), baselineAlignment.mapAlignmentOffset(offset, edits));
   }
 }
 const fixtures = [

@@ -7,7 +7,8 @@ import {
   sanitizeLatexForParsing,
 } from './latexContext';
 import { findLatexEnvironmentPairAt } from './environmentConvert';
-import { TextEdit } from './latexEdit';
+import { TextEdit, applyTextEditsToString } from './latexEdit';
+import { AlignmentStructure, getAlignmentColumnEdits, getAlignmentStructure } from './latexColumns';
 
 interface Anchor {
   start: number;
@@ -134,7 +135,8 @@ export function getAlignmentEdits(
   options: LatexContextOptions = {},
   tabSize = 4,
   characterWidths: ReadonlyMap<string, number> = new Map(),
-  snapshot?: LatexDocumentSnapshot
+  snapshot?: LatexDocumentSnapshot,
+  structure?: AlignmentStructure
 ): TextEdit[] {
   let context = getLatexContext(text, offset, options, snapshot);
   if (context.inMarkdownCode || context.inTextLikeCommand || context.inVerbatimLikeEnvironment) {
@@ -146,6 +148,14 @@ export function getAlignmentEdits(
   }
 
   let sanitized = snapshot ? snapshot.sanitizedText : sanitizeLatexForParsing(text);
+  structure ??= getAlignmentStructure(text, pair, snapshot);
+  const multiline = structure?.rows.filter((row) => row.dataStart !== undefined &&
+    structure!.source.slice(row.dataStart, row.complete ? row.end : row.bodyEnd).includes('\n')).map((row) => {
+    const first = structure!.base + row.dataStart!;
+    const last = text.indexOf('\n', structure!.base + (row.complete ? row.end : row.bodyEnd));
+    return { start: text.lastIndexOf('\n', first - 1) + 1, end: last < 0 ? text.length : last + 1 };
+  }) || [];
+  let multilineIndex = 0;
   let rows: AlignmentRow[] = [];
   let nested = 0;
   let braces = 0;
@@ -154,6 +164,11 @@ export function getAlignmentEdits(
   let start = text.indexOf('\n', pair.beginEnd) + 1;
   if (!start) return [];
   while (start < pair.endStart) {
+    while (multilineIndex < multiline.length && multiline[multilineIndex].end <= start) multilineIndex++;
+    if (multiline[multilineIndex]?.start <= start) {
+      start = multiline[multilineIndex].end;
+      continue;
+    }
     let newline = text.indexOf('\n', start);
     let end = newline == -1 ? text.length : newline;
     if (end > pair.endStart) break;
@@ -164,7 +179,8 @@ export function getAlignmentEdits(
     let skip = nested != 0 || braces != 0 || brackets != 0;
     let cell = 0;
     let inlineMath = false;
-    let tokens = /\\(?:begin|end)\s*\{[^}]+\}|\\[a-zA-Z]+\*?|\\[^\r\n]|[{}\[\]&+=\-$]/g;
+    let displayMath = false;
+    let tokens = /\\(?:begin|end)\s*\{[^}]+\}|\\[a-zA-Z]+\*?|\\[^\r\n]|\$\$?|[{}\[\]&+=\-]/g;
     let token: RegExpExecArray | null;
     while ((token = tokens.exec(line)) !== null) {
       let symbol = token[0];
@@ -179,20 +195,24 @@ export function getAlignmentEdits(
         break;
       } else if (nested == 0) {
         if (symbol == '$') inlineMath = !inlineMath;
+        else if (symbol == '$$') displayMath = !displayMath;
         else if (symbol == '\\(') inlineMath = true;
         else if (symbol == '\\)') inlineMath = false;
+        else if (symbol == '\\[') displayMath = true;
+        else if (symbol == '\\]') displayMath = false;
         else if (symbol == '{') braces++;
         else if (symbol == '}') braces--;
         else if (symbol == '[') brackets++;
         else if (symbol == ']') brackets--;
         else if (braces == 0 && brackets == 0) {
+          if ((inlineMath || displayMath) && (symbol == '&' || symbol == '\\\\')) continue;
           if (symbol == '\\\\') {
             if (!/^\*?(?:\[[^\]]*\])?\s*$/.test(line.slice(tokens.lastIndex))) {
               skip = true;
               break;
             }
           } else if (symbol != '&') {
-            if ((table && !inlineMath) || !/^[+=-]$/.test(symbol)) continue;
+            if (displayMath || (table && !inlineMath) || !/^[+=-]$/.test(symbol)) continue;
             // Signs in exponents, subscripts and unary expressions are not alignment points.
             if (symbol != '=' && (/[+=\-*/(^_&$]$/.test(line.slice(0, token.index).trimEnd()) ||
                 !line.slice(indent.length, token.index).trim())) continue;
@@ -264,4 +284,62 @@ export function getAlignmentEdits(
   alignAnchors(rows.flatMap((row) => row.comment ? [{ row, anchor: row.comment }] : []),
     tabSize, characterWidths);
   return rows.flatMap(whitespaceEdits);
+}
+
+/** Synchronize columns and whitespace in one original-coordinate edit batch. */
+export function getAutoAlignmentEdits(
+  text: string,
+  offset: number,
+  options: LatexContextOptions = {},
+  tabSize = 4,
+  characterWidths: ReadonlyMap<string, number> = new Map(),
+  snapshot?: LatexDocumentSnapshot
+): TextEdit[] {
+  const context = getLatexContext(text, offset, options, snapshot);
+  if (context.inMarkdownCode || context.inTextLikeCommand || context.inVerbatimLikeEnvironment) return [];
+  const pair = findLatexEnvironmentPairAt(text, offset, options, snapshot);
+  if (!pair || !resolveLatexContextOptions(options).alignmentEnvironments.includes(pair.name)) return [];
+  const structure = getAlignmentStructure(text, pair, snapshot);
+  const columns = structure ? getAlignmentColumnEdits(structure) : [];
+  if (!columns.length) return getAlignmentEdits(text, offset, options, tabSize, characterWidths, snapshot, structure);
+
+  const parts: string[] = [];
+  let cursor = 0, delta = 0;
+  const blocks = columns.map((edit) => {
+    parts.push(text.slice(cursor, edit.start), edit.text);
+    cursor = edit.end;
+    const start = edit.start + delta;
+    delta += edit.text.length;
+    return { start, end: start + edit.text.length, edits: [] as TextEdit[], suffix: '' };
+  });
+  parts.push(text.slice(cursor));
+  const expanded = parts.join('');
+  const whitespace = getAlignmentEdits(expanded, mapAlignmentOffset(offset, columns), options, tabSize, characterWidths);
+  const result = columns.map((edit) => ({ ...edit }));
+  let index = 0;
+  delta = 0;
+  for (const edit of whitespace) {
+    while (index < blocks.length && blocks[index].end < edit.start) {
+      delta += columns[index++].text.length;
+    }
+    const block = blocks[index];
+    if (block && edit.start < block.start && edit.end > block.start && edit.end <= block.end) {
+      // A control-space can merge original whitespace with the insertion's leading padding.
+      result[index].start = edit.start - delta;
+      block.edits.push({ start: 0, end: edit.end - block.start, text: edit.text });
+    } else if (block && edit.start >= block.start && edit.end <= block.end) {
+      block.edits.push({ start: edit.start - block.start, end: edit.end - block.start, text: edit.text });
+    } else {
+      const shift = delta + (block && edit.start >= block.end ? columns[index].text.length : 0);
+      if (block && edit.start === block.end) {
+        // Right padding may span the end of an inserted column and the original whitespace.
+        result[index].end = edit.end - shift;
+        block.suffix = edit.text;
+      } else result.push({ start: edit.start - shift, end: edit.end - shift, text: edit.text });
+    }
+  }
+  for (let i = 0; i < columns.length; i++) {
+    result[i].text = applyTextEditsToString(columns[i].text, blocks[i].edits) + blocks[i].suffix;
+  }
+  return result.sort((a, b) => a.start - b.start);
 }

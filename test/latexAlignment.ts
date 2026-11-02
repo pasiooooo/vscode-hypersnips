@@ -12,6 +12,9 @@ function format(text: string, options: LatexContextOptions = {}, tabSize = 4) {
 }
 
 export function testLatexAlignment() {
+  const multiline = '\\begin{tabular}{@{}lll@{}}\n  A & B & C \\\\\n  \\[\n    \\frac{1}{2}\n  \\]\n  &\n  second\n  & third \\\\\n\\end{tabular}';
+  assert.strictEqual(format(multiline), multiline, 'multiline cells keep their formula layout and do not widen the header');
+  assert.ok(format('\\begin{tabular}{ll}\n  A & \\[x&y\\] \\\\\n  BBB & z \\\\\n\\end{tabular}').includes('\\[x&y\\]'), 'display-math separators are cell content');
   const emptyFirstCell = '\\begin{tabular}{@{}ll@{}}\n  \\toprule\n  key & value \\\\\n  \\midrule\n  \t    &       \\\\\n  \\bottomrule\n\\end{tabular}';
   assert.strictEqual(format(emptyFirstCell), '\\begin{tabular}{@{}ll@{}}\n  \\toprule\n  key & value \\\\\n  \\midrule\n      &       \\\\\n  \\bottomrule\n\\end{tabular}', 'empty first-cell padding must not widen other rows');
   const extraIndent = '\\begin{matrix}\n  key & value \\\\\n  \t  x & y \\\\\n\\end{matrix}';

@@ -5,7 +5,7 @@ import * as path from 'path';
 import { openExplorer } from './openFileExplorer';
 import { HSnippet } from './hsnippet';
 import { HSnippetInstance } from './hsnippetInstance';
-import { getAlignmentEdits, mapAlignmentOffset } from './latexAlignment';
+import { getAutoAlignmentEdits, mapAlignmentOffset } from './latexAlignment';
 import { getFontCharacterWidths } from './fontMetrics';
 import { parse } from './parser';
 import { getSnippetDir } from './utils';
@@ -235,7 +235,7 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
         for (let offset of offsets) {
             let context = snapshot.contextAt(offset);
             if (context.inMarkdownCode || context.inTextLikeCommand || context.inVerbatimLikeEnvironment) continue;
-            if (!context.canSmartTab && !(context.inComment && context.environmentStack.length > 0)) continue;
+            if (!context.environmentStack.some((name) => alignmentEnvironments.has(name))) continue;
             let pair = snapshot.environmentPairAt(offset);
             if (pair && alignmentEnvironments.has(pair.name)) {
                 environments.set(`${pair.beginStart}:${pair.endEnd}`,
@@ -253,13 +253,13 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
             size: font.get<number>('fontSize', 14),
             weight: font.get<string>('fontWeight', 'normal'),
             letterSpacing: font.get<number>('letterSpacing', 0),
-        }, [...environments.values()].map(({ beginEnd, endStart }) => text.slice(beginEnd, endStart)).join(''),
+        }, ' &' + [...environments.values()].map(({ beginEnd, endStart }) => text.slice(beginEnd, endStart)).join(''),
         requestIsCurrent);
         if (!requestIsCurrent()) return;
         let tabSize = typeof editor.options.tabSize == 'number' ? editor.options.tabSize : 4;
         let edits = new Map<number, TextEdit>();
         for (let { offset } of environments.values()) {
-            for (let edit of getAlignmentEdits(text, offset, options, tabSize, characterWidths, snapshot)) {
+            for (let edit of getAutoAlignmentEdits(text, offset, options, tabSize, characterWidths, snapshot)) {
                 edits.set(edit.start, edit);
             }
         }
@@ -464,6 +464,7 @@ async function smartTab(editor: vscode.TextEditor) {
         const position = editor.document.positionAt(offset);
         return new vscode.Selection(position, position);
     });
+    editor.revealRange(new vscode.Range(editor.selection.active, editor.selection.active));
 }
 
 async function convertEnvironment(editor: vscode.TextEditor) {

@@ -100,6 +100,7 @@ for (const [spec, grown, peer, row, padding] of [
   ['lc', 'lcl', 'a&b&c', 'd', 2],
   ['lcrrr', 'lcrrr', 'a&b&c', 'd', 2],
   ['|lc|', '|lcl|', 'a&b&c', 'd', 2],
+  ['@{}lc@{}', '@{}lcl@{}', 'a&b&c', 'd', 2],
   ['*{2}{c}||', '*{2}{c}l||', 'a&b&c', 'd', 2],
   ['lc', 'lcll', 'a&b', 'c&d&e&f', 0],
 ] as [string, string, string, string, number][]) {

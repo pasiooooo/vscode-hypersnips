@@ -531,9 +531,10 @@ export function getLatexContext(
   let mathEnvironments = new Set(resolved.mathEnvironments);
   let inVerbatimLikeEnvironment = isInAnyEnvironment(environmentStack, verbatimEnvironments);
   let delimiterStack = getMathDelimiterStackFromSanitized(parsedPrefix.sanitized);
-  let delimiterMathKind = delimiterStack[delimiterStack.length - 1]?.kind;
-  let inRowBreakEnvironment = isInAnyEnvironment(environmentStack, rowBreakEnvironments);
-  let inAlignmentEnvironment = isInAnyEnvironment(environmentStack, alignmentEnvironments);
+  let delimiterFrame = delimiterStack[delimiterStack.length - 1];
+  let delimiterMathKind = delimiterFrame?.kind;
+  const editingEnvironment = currentEnvironmentFrame &&
+    (!delimiterFrame || delimiterFrame.start < currentEnvironmentFrame.beginEnd);
   let inMathEnvironment = isInAnyEnvironment(environmentStack, mathEnvironments);
   let blocked = inComment || inMarkdownCode || inTextLikeCommand || inVerbatimLikeEnvironment;
   let inMath = (Boolean(delimiterMathKind) || inMathEnvironment) && !blocked;
@@ -554,9 +555,9 @@ export function getLatexContext(
     inVerbatimLikeEnvironment,
     inMath,
     mathKind,
-    canSmartEnter: inRowBreakEnvironment && !blocked,
-    canSmartTab: inAlignmentEnvironment && !blocked,
-    canInsertAlignmentSeparator: inAlignmentEnvironment && !blocked,
+    canSmartEnter: Boolean(editingEnvironment && rowBreakEnvironments.has(currentEnvironment!)) && !blocked,
+    canSmartTab: Boolean(editingEnvironment && alignmentEnvironments.has(currentEnvironment!)) && !blocked,
+    canInsertAlignmentSeparator: Boolean(editingEnvironment && alignmentEnvironments.has(currentEnvironment!)) && !blocked,
     canExpandMathSnippet: inMath && !blocked,
   };
 }

@@ -8,7 +8,7 @@ const MAX_SPEC_DEPTH = 16;
 const TABLES = new Set(['array', 'tabular', 'tabular*', 'tabularx', 'longtable']);
 
 interface Group { value: string; end: number }
-interface Row { start: number; end: number; columns: number; valid: boolean; content: boolean; complete: boolean }
+interface Row { start: number; end: number; dataStart?: number; bodyEnd: number; columns: number; valid: boolean; content: boolean; complete: boolean }
 
 function skipSpace(text: string, start: number) {
   while (/\s/.test(text[start] || '')) start++;
@@ -39,30 +39,32 @@ function positiveInteger(value: string): number | undefined {
   return count >= 1 && count <= MAX_COLUMNS ? count : undefined;
 }
 
-function specColumns(spec: string, depth = 0): number | undefined {
+function specColumns(spec: string, depth = 0): { columns: number; appendOffset: number } | undefined {
   if (depth > MAX_SPEC_DEPTH) return undefined;
-  let columns = 0;
+  let columns = 0, appendOffset = 0;
   for (let index = 0; index < spec.length;) {
     const char = spec[index++];
     if (/\s/.test(char) || char === '|') continue;
-    if ('lcrX'.includes(char)) columns++;
+    if ('lcrX'.includes(char)) { columns++; appendOffset = index; }
     else if ('pmb@!><'.includes(char)) {
       const group = groupAt(spec, index);
       if (!group) return undefined;
       index = group.end;
       if ('pmb'.includes(char)) columns++;
+      if ('pmb<'.includes(char)) appendOffset = index;
     } else if (char === '*') {
       const count = groupAt(spec, index);
       const repeated = count && groupAt(spec, count.end);
       const times = count && positiveInteger(count.value);
       const width = repeated && specColumns(repeated.value, depth + 1);
       if (!repeated || !times || !width) return undefined;
-      columns += times * width;
+      columns += times * width.columns;
       index = repeated.end;
+      appendOffset = index;
     } else return undefined;
     if (columns > MAX_COLUMNS) return undefined;
   }
-  return columns || undefined;
+  return columns ? { columns, appendOffset } : undefined;
 }
 
 function optionalPosition(text: string, index: number): number | undefined {
@@ -85,21 +87,29 @@ function declaration(text: string, name: string): { start: number; columns?: num
   }
   const argument = groupAt(text, index);
   if (!argument) return undefined;
-  const columns = TABLES.has(name) ? specColumns(argument.value) : positiveInteger(argument.value);
+  const specification = TABLES.has(name) ? specColumns(argument.value) : undefined;
+  const columns = TABLES.has(name) ? specification?.columns : positiveInteger(argument.value);
   const count = columns && (TABLES.has(name) ? columns : columns * 2);
   if (!count || count > MAX_COLUMNS) return undefined;
-  const trailingBars = argument.value.match(/[|\s]*$/)![0].length;
   return { start: argument.end, columns: count,
-    appendOffset: TABLES.has(name) ? argument.end - 1 - trailingBars : undefined };
+    appendOffset: specification ? argument.end - 1 - argument.value.length + specification.appendOffset : undefined };
 }
 
 function scanRows(text: string, start: number, name: string) {
   const rows: Row[] = [];
   const nested: string[] = [];
   let rowStart = start, columns = 1, valid = true, content = false, cellContent = false;
+  let dataStart: number | undefined, bodyEnd = start, mathEnd: string | undefined;
+  function touch(start: number, end: number) {
+    dataStart ??= start;
+    bodyEnd = end;
+    content = true;
+  }
   function finish(end: number, complete: boolean) {
-    rows.push({ start: rowStart, end, columns, valid: valid && nested.length === 0, content, complete });
+    rows.push({ start: rowStart, end, dataStart, bodyEnd, columns,
+      valid: valid && nested.length === 0 && !mathEnd, content, complete });
     columns = 1; valid = true; content = false; cellContent = false;
+    dataStart = undefined;
   }
   for (let index = start; index < text.length;) {
     const char = text[index];
@@ -107,27 +117,48 @@ function scanRows(text: string, start: number, name: string) {
     if (char === '{') {
       const group = groupAt(text, index);
       if (!group) { valid = false; break; }
-      if (!nested.length) content = cellContent = true;
+      if (!nested.length) { touch(index, group.end); cellContent = true; }
       index = group.end;
       continue;
     }
     if (char === '}') valid = false;
+    if (char === '$' && !nested.length) {
+      const delimiter = text[index + 1] === '$' ? '$$' : '$';
+      if (!mathEnd) mathEnd = delimiter;
+      else if (mathEnd === delimiter) mathEnd = undefined;
+      touch(index, index + delimiter.length);
+      cellContent = true;
+      index += delimiter.length;
+      continue;
+    }
     if (char === '\\') {
       const command = /^\\([a-zA-Z]+\*?|[^\r\n])/.exec(text.slice(index));
       if (!command) { valid = false; index++; continue; }
       const commandStart = index;
       index += command[0].length;
       const word = command[1];
+      if (mathEnd) {
+        if (word === mathEnd) mathEnd = undefined;
+        touch(commandStart, index);
+        continue;
+      }
+      if (!nested.length && (word === '[' || word === '(')) {
+        mathEnd = word === '[' ? ']' : ')';
+        touch(commandStart, index);
+        cellContent = true;
+        continue;
+      }
       if (word === 'begin' || word === 'end') {
         const environment = groupAt(text, index);
         if (!environment) { valid = false; continue; }
         index = environment.end;
         const environmentName = environment.value.trim();
         if (word === 'begin') {
-          if (!nested.length) content = cellContent = true;
+          if (!nested.length) { touch(commandStart, index); cellContent = true; }
           nested.push(environmentName);
         } else if (nested.length) {
           if (nested.pop() !== environmentName) valid = false;
+          if (!nested.length) touch(commandStart, index);
         } else {
           if (environmentName !== name) valid = false;
           finish(commandStart, false);
@@ -136,7 +167,7 @@ function scanRows(text: string, start: number, name: string) {
         continue;
       }
       if (word === 'verb' || word === 'verb*') {
-        if (!nested.length) valid = false;
+        if (!nested.length) { valid = false; touch(commandStart, index); }
         const delimiter = text[index];
         const end = delimiter && text.indexOf(delimiter, index + 1);
         if (typeof end !== 'number' || end < 0 || /[\r\n]/.test(text.slice(index, end))) {
@@ -144,6 +175,7 @@ function scanRows(text: string, start: number, name: string) {
           break;
         }
         index = end + 1;
+        if (!nested.length) touch(commandStart, index);
         continue;
       }
       if (nested.length) continue;
@@ -203,13 +235,14 @@ function scanRows(text: string, start: number, name: string) {
         else columns += width - 1;
         index = body?.end ?? format?.end ?? span?.end ?? index;
       }
-      content = cellContent = true;
+      touch(commandStart, index);
+      cellContent = true;
       if (columns > MAX_COLUMNS) valid = false;
       continue;
     }
     if (!nested.length) {
-      content = true;
-      if (char === '&') { columns++; cellContent = false; }
+      touch(index, index + 1);
+      if (char === '&' && !mathEnd) { columns++; cellContent = false; }
       else cellContent = true;
       if (columns > MAX_COLUMNS) valid = false;
     }
@@ -219,25 +252,56 @@ function scanRows(text: string, start: number, name: string) {
   return { rows, closed: false };
 }
 
+export function getAlignmentStructure(
+  text: string,
+  frame: Pick<LatexEnvironmentFrame, 'name' | 'beginStart' | 'beginEnd'>,
+  snapshot?: LatexDocumentSnapshot
+) {
+  const pair = snapshot?.environmentPairAt(frame.beginEnd);
+  const end = pair?.beginStart === frame.beginStart ? pair.endEnd : text.length;
+  const source = sanitizeLatexForParsing(text.slice(frame.beginEnd, end));
+  const declared = declaration(source, frame.name);
+  if (!declared) return undefined;
+  return { ...scanRows(source, declared.start, frame.name), source, declared, base: frame.beginEnd };
+}
+
+export type AlignmentStructure = NonNullable<ReturnType<typeof getAlignmentStructure>>;
+
+export function getAlignmentColumnEdits(structure: AlignmentStructure): TextEdit[] {
+  if (!structure.closed) return [];
+  const rows = structure.rows.filter((row) => row.valid && row.content);
+  if (!rows.length) return [];
+  const widest = rows.reduce((width, row) => Math.max(width, row.columns), 0);
+  const expected = widest > 1 ? widest : structure.declared.columns || widest;
+  const edits = rows.filter((row) => row.complete && row.columns < expected).map((row) => ({
+    start: structure.base + row.bodyEnd, end: structure.base + row.bodyEnd,
+    text: ' &'.repeat(expected - row.columns),
+  }));
+  const { columns, appendOffset } = structure.declared;
+  if (columns && appendOffset !== undefined && expected > columns) {
+    const start = structure.base + appendOffset;
+    edits.push({ start, end: start, text: 'l'.repeat(expected - columns) });
+  }
+  return edits.sort((a, b) => a.start - b.start);
+}
+
 /** Complete trailing cells and extend known declarations; ambiguous input stays untouched. */
 export function getAlignmentColumnCompletion(
   text: string,
   offset: number,
   frame: LatexEnvironmentFrame,
-  snapshot?: LatexDocumentSnapshot
+  snapshot?: LatexDocumentSnapshot,
+  structure?: AlignmentStructure
 ): { missing: number; columnSpecEdit?: TextEdit } {
   if (!Number.isInteger(offset) || offset < frame.beginEnd || offset > text.length || frame.beginEnd < 0) return { missing: 0 };
-  const pair = snapshot?.environmentPairAt(offset);
-  const end = pair?.beginStart === frame.beginStart ? pair.endEnd : text.length;
-  const local = sanitizeLatexForParsing(text.slice(frame.beginEnd, end));
-  const declared = declaration(local, frame.name);
-  if (!declared) return { missing: 0 };
+  structure ??= getAlignmentStructure(text, frame, snapshot);
+  if (!structure) return { missing: 0 };
+  const { source: local, declared, rows, closed } = structure;
   const position = offset - frame.beginEnd;
   const prefixRows = scanRows(local.slice(0, position), declared.start, frame.name).rows;
   const current = prefixRows[prefixRows.length - 1];
   if (!current?.valid || !current.content) return { missing: 0 };
   let peerColumns = 0;
-  const { rows, closed } = scanRows(local, declared.start, frame.name);
   for (const row of rows) {
     if (!(row.start <= position && position <= row.end) && row.valid && row.content &&
         (closed || (row.complete && row.end < position))) {

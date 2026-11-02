@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { getAlignmentEdits } from '../src/latexAlignment';
+import { getAlignmentEdits, getAutoAlignmentEdits } from '../src/latexAlignment';
 import { LatexDocumentState } from '../src/latexDocumentState';
 import { applyTextEditsToString } from '../src/latexEdit';
 import * as reference from './reference/latexAlignment';
@@ -172,9 +172,9 @@ async function testAffectedEnvironments() {
       } };
       if (name == './latexAlignment') return {
         ...require(path.join(__dirname, '../src/latexAlignment')),
-        getAlignmentEdits: (...args: Parameters<typeof getAlignmentEdits>) => {
+        getAutoAlignmentEdits: (...args: Parameters<typeof getAutoAlignmentEdits>) => {
           offsets.push(args[1]);
-          return getAlignmentEdits(...args);
+          return getAutoAlignmentEdits(...args);
         },
       };
       if (name == './latexEdit' || name == './latexDocumentState') return require(path.join(__dirname, '../src', name));
@@ -193,7 +193,7 @@ async function testAffectedEnvironments() {
     const pair = state.environmentPairAt(offset)!;
     return text.slice(pair.beginEnd, pair.endStart);
   });
-  assert.strictEqual(measuredText, bodies.join(''), 'only the two affected environment bodies request glyphs');
+  assert.strictEqual(measuredText, ' &' + bodies.join(''), 'only affected bodies and potentially inserted separators request glyphs');
   assert.strictEqual(editCalls, 1, 'multiple environments share one undo-preserving edit transaction');
   assert.strictEqual(currentRequest!(), true);
 

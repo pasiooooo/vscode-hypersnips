@@ -78,6 +78,71 @@ export async function run() {
     await until(() => editor.document.getText().includes('\\end{align*}'), 'matching environment name');
     assert.strictEqual(editor.document.getText(), '\\begin{align*}\n  a &= b\n\\end{align*}');
   });
+  await test('editing a completed row synchronizes other rows and the declaration without Enter', async () => {
+    const editor = await openMarked('\\begin{tabular}{lc}\n  a & b| \\\\\n  c & d \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await type('&');
+    const expected = '\\begin{tabular}{lcl}\n  a & b & \\\\\n  c & d & \\\\\n\\end{tabular}';
+    const compact = (text: string) => text.replace(/[ \t]/g, '');
+    await until(() => compact(editor.document.getText()) === compact(expected), 'live columns and declaration synchronization');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'live column synchronization joins the triggering edit undo');
+  });
+  await test('column synchronization preserves a TeX control-space and uses a valid edit batch', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  X| & Y & Z \\\\\n  a\\  \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await type('Q');
+    await until(() => editor.document.lineAt(2).text.includes('a\\ &') &&
+      (editor.document.lineAt(2).text.match(/&/g) || []).length === 2, 'control-space row accepts combined edits');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'control-space synchronization undo');
+  });
+  await test('Tab and Enter inside a multiline cell formula do not insert table syntax', async () => {
+    const editor = await openMarked('\\begin{tabular}{ll}\n  A & B \\\\\n  \\[\n    x|\n  \\]\n  & y \\\\\n\\end{tabular}');
+    await configure(true);
+    const before = editor.document.getText();
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.document.getText() !== before, 'normal formula indentation');
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.document.lineCount === 8, 'normal newline inside formula');
+    await delay(400);
+    assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 2, 'formula editing does not add table separators');
+    assert.strictEqual((editor.document.getText().match(/\\\\/g) || []).length, 2, 'formula Enter does not add a table row break');
+    assert.strictEqual(editor.document.lineAt(1).text, '  A & B \\\\');
+  });
+  await test('adding a column to a multiline row updates its peers without changing the formula', async () => {
+    const editor = await openMarked('\\begin{tabular}{@{}ll@{}}\n  A & B \\\\\n  \\[\n    \\frac{1}{2}\n  \\]\n  & value| \\\\\n\\end{tabular}');
+    await configure(true);
+    await type('&');
+    await until(() => editor.document.lineAt(0).text === '\\begin{tabular}{@{}lll@{}}' &&
+      editor.document.lineAt(1).text === '  A & B & \\\\', 'multiline row grows peer and declaration');
+    assert.strictEqual(editor.document.getText().split('\n').slice(2, 5).join('\n'), '  \\[\n    \\frac{1}{2}\n  \\]');
+    assert.strictEqual(editor.document.lineAt(5).text, '  & value& \\\\');
+  });
+  await test('a multiline row can be written across Enter presses before its explicit row ending', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  A & B & C \\\\\n  \\[\n    x\n  \\]|\n\\end{tabular}');
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.selection.active.line === 5, 'continue after display formula');
+    await type('&');
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.selection.active.line === 6, 'continue after a standalone separator');
+    await type('2');
+    await delay(400);
+    assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 3, 'unfinished cells are not filled early');
+    assert.strictEqual((editor.document.getText().match(/\\\\/g) || []).length, 1, 'continuation Enter does not finish the table row');
+    await type(' \\\\');
+    await until(() => (editor.document.getText().match(/&/g) || []).length === 4, 'finishing the logical row fills its remaining cell');
+  });
+  await test('Tab finds an existing separator on the next physical line', async () => {
+    const editor = await openMarked('\\begin{matrix}\n  a|\n  & b \\\\\n\\end{matrix}');
+    const before = editor.document.getText();
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.selection.active.line === 2 && editor.selection.active.character === 4, 'next logical column caret');
+    assert.strictEqual(editor.document.getText(), before);
+  });
   await test('Tab on an empty first cell navigates without widening the header', async () => {
     const editor = await openMarked('\\begin{tabular}{@{}ll@{}}\n  \\toprule\n  key & value \\\\\n  \\midrule\n      |&       \\\\\n  \\bottomrule\n\\end{tabular}');
     await configure(true);
@@ -111,13 +176,13 @@ export async function run() {
     });
   }
   await test('Tab supports mixed multi-cursor navigation and insertion', async () => {
-    const editor = await openMarked('\\begin{matrix}\na|x\nb & c\n\\end{matrix}');
+    const editor = await openMarked('\\begin{matrix}\na|x \\\\\nb & c \\\\\n\\end{matrix}');
     editor.selections = [new vscode.Selection(1, 1, 1, 1), new vscode.Selection(2, 1, 2, 1)];
     await vscode.commands.executeCommand('hsnips.smartTab');
-    await until(() => editor.document.lineAt(1).text === 'a & x' && editor.selections.every(s => s.active.character === 4), 'mixed Tab plans and shifted offsets');
-    assert.strictEqual(editor.document.getText(), '\\begin{matrix}\na & x\nb & c\n\\end{matrix}');
+    await until(() => editor.document.lineAt(1).text === 'a & x \\\\' && editor.selections.every(s => s.active.character === 4), 'mixed Tab plans and shifted offsets');
+    assert.strictEqual(editor.document.getText(), '\\begin{matrix}\na & x \\\\\nb & c \\\\\n\\end{matrix}');
     await type('z');
-    await until(() => editor.document.lineAt(1).text === 'a & zx' && editor.document.lineAt(2).text === 'b & zc', 'typing at both planned carets');
+    await until(() => editor.document.lineAt(1).text === 'a & zx \\\\' && editor.document.lineAt(2).text === 'b & zc \\\\', 'typing at both planned carets');
   });
   await test('empty-row Tab and delayed alignment share one undo step', async () => {
     const editor = await openMarked('\\begin{tabular}{ll}\n  key & value \\\\\n  |\\\\\n\\end{tabular}');

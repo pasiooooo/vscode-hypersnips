@@ -331,10 +331,15 @@ export class LatexDocumentState implements LatexDocumentSnapshot {
     const inVerbatimLikeEnvironment = environmentStack.some((name) => this.resolved.verbatimLikeEnvironments.includes(name));
     const inTextLikeCommand = state.textDepths.length > 0;
     const blocked = local.inComment || local.inMarkdownCode || inVerbatimLikeEnvironment || inTextLikeCommand;
-    const delimiter = state.delimiters[state.delimiters.length - 1]?.token.kind;
+    const delimiterFrame = state.delimiters[state.delimiters.length - 1];
+    const delimiter = delimiterFrame?.token.kind;
+    const delimiterStart = delimiterFrame ? (delimiterFrame.block == partial ? this.starts[index] :
+      this.blockOffsets.get(delimiterFrame.block)!) + delimiterFrame.token.start : -1;
+    const currentFrame = frames[frames.length - 1];
+    const editingEnvironment = currentFrame && delimiterStart < currentFrame.beginEnd;
     const inMath = !blocked && (Boolean(delimiter) || environmentStack.some((name) => this.resolved.mathEnvironments.includes(name)));
-    const canSmartEnter = !blocked && environmentStack.some((name) => this.resolved.rowBreakEnvironments.includes(name));
-    const canSmartTab = !blocked && environmentStack.some((name) => this.resolved.alignmentEnvironments.includes(name));
+    const canSmartEnter = !blocked && Boolean(editingEnvironment && this.resolved.rowBreakEnvironments.includes(currentFrame.name));
+    const canSmartTab = !blocked && Boolean(editingEnvironment && this.resolved.alignmentEnvironments.includes(currentFrame.name));
     const context: LatexEditorContext = { ...local, environmentStack, environmentFrames: frames,
       currentEnvironment: environmentStack[environmentStack.length - 1], currentEnvironmentFrame: frames[frames.length - 1],
       inVerbatimLikeEnvironment, inTextLikeCommand, inMath, mathKind: inMath ? delimiter || 'environment' : 'none',
