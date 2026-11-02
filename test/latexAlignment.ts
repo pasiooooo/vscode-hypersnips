@@ -13,7 +13,7 @@ function format(text: string, options: LatexContextOptions = {}, tabSize = 4) {
 
 export function testLatexAlignment() {
   const multiline = '\\begin{tabular}{@{}lll@{}}\n  A & B & C \\\\\n  \\[\n    \\frac{1}{2}\n  \\]\n  &\n  second\n  & third \\\\\n\\end{tabular}';
-  assert.strictEqual(format(multiline), multiline, 'multiline cells keep their formula layout and do not widen the header');
+  assert.strictEqual(format(multiline), '\\begin{tabular}{@{}lll@{}}\n  A             & B      & C     \\\\\n  \\[\n    \\frac{1}{2}\n  \\]\n                &\n                  second\n                         & third \\\\\n\\end{tabular}', 'multiline cells share column positions while preserving their line breaks');
   assert.ok(format('\\begin{tabular}{ll}\n  A & \\[x&y\\] \\\\\n  BBB & z \\\\\n\\end{tabular}').includes('\\[x&y\\]'), 'display-math separators are cell content');
   const emptyFirstCell = '\\begin{tabular}{@{}ll@{}}\n  \\toprule\n  key & value \\\\\n  \\midrule\n  \t    &       \\\\\n  \\bottomrule\n\\end{tabular}';
   assert.strictEqual(format(emptyFirstCell), '\\begin{tabular}{@{}ll@{}}\n  \\toprule\n  key & value \\\\\n  \\midrule\n      &       \\\\\n  \\bottomrule\n\\end{tabular}', 'empty first-cell padding must not widen other rows');
@@ -106,7 +106,7 @@ export function testLatexAlignment() {
 \end{align}`;
   let nestedResult = format(nested);
   assert.ok(nestedResult.includes('    a&b'));
-  assert.ok(nestedResult.includes('  a    & = 1'));
+  assert.match(nestedResult, /\n  a +& = 1/, 'outer columns include the width of the multiline nested cell');
   let inner = applyTextEditsToString(nested, getAlignmentEdits(nested, nested.indexOf('a&b')));
   assert.ok(inner.includes('    a      & b'));
   assert.ok(inner.includes('  a&=1'));

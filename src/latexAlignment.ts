@@ -149,6 +149,13 @@ export function getAlignmentEdits(
 
   let sanitized = snapshot ? snapshot.sanitizedText : sanitizeLatexForParsing(text);
   structure ??= getAlignmentStructure(text, pair, snapshot);
+  const sharedLayout = structure?.closed && structure.rows.some((row) => row.valid && row.complete &&
+    row.dataStart !== undefined && structure!.source.slice(row.dataStart, row.end).includes('\n'));
+  function finish(edits: TextEdit[]) {
+    if (!sharedLayout) return edits;
+    return composeEdits(text, edits, (expanded) => getMultilineWhitespaceEdits(expanded,
+      edits.length ? getAlignmentStructure(expanded, pair!) : structure, tabSize, characterWidths));
+  }
   const multiline = structure?.rows.filter((row) => row.dataStart !== undefined &&
     structure!.source.slice(row.dataStart, row.complete ? row.end : row.bodyEnd).includes('\n')).map((row) => {
     const first = structure!.base + row.dataStart!;
@@ -190,7 +197,7 @@ export function getAlignmentEdits(
       } else if (/^\\end\b/.test(symbol)) {
         nested--;
         skip = true;
-      } else if (/^\\verb\*?$/.test(symbol)) {
+      } else if (/^\\(?:verb\*?|Verb\*?|lstinline\*?|mintinline)$/.test(symbol)) {
         skip = true;
         break;
       } else if (nested == 0) {
@@ -245,7 +252,7 @@ export function getAlignmentEdits(
     }
     start = end + 1;
   }
-  if (rows.length < 2) return [];
+  if (rows.length < 2) return finish([]);
 
   // Padding before an empty first cell is not document indentation.
   const dataRows = rows.filter((row) => row.cells.length || row.rowBreak);
@@ -283,7 +290,136 @@ export function getAlignmentEdits(
     tabSize, characterWidths);
   alignAnchors(rows.flatMap((row) => row.comment ? [{ row, anchor: row.comment }] : []),
     tabSize, characterWidths);
-  return rows.flatMap(whitespaceEdits);
+  return finish(rows.flatMap(whitespaceEdits));
+}
+
+function getMultilineWhitespaceEdits(
+  text: string, structure: AlignmentStructure | undefined, tabSize: number,
+  characterWidths: ReadonlyMap<string, number>
+): TextEdit[] {
+  if (!structure?.closed) return [];
+  const width = (value: string, start = 0) => displayWidth(value, tabSize, characterWidths, start);
+  const lineStart = (offset: number) => text.lastIndexOf('\n', offset - 1) + 1;
+  const horizontal = (value: string) => /^[ \t]*$/.test(value);
+  const rows = structure.rows.filter((row) => row.valid && row.complete && row.dataStart !== undefined &&
+    row.columns === row.separators.length + 1 &&
+    !/\\(?:multicolumn\b|begin\s*\{(?:verbatim\*?|Verbatim|lstlisting|minted|comment)\})/.test(
+      text.slice(structure.base + row.dataStart, structure.base + row.end))).flatMap((row) => {
+    const first = structure.base + row.dataStart!;
+    const start = lineStart(first);
+    if (start < structure.base + structure.declared.start || !horizontal(text.slice(start, first))) return [];
+    const ends = [...row.separators.map((separator) => structure.base + separator.start), structure.base + row.end];
+    let cursor = start;
+    const cells = ends.map((end) => {
+      const cellStart = cursor;
+      const fragments: { start: number; content: number; end: number; body: string;
+        standalone: boolean; indent: string; endWidth: number }[] = [];
+      while (cursor < end) {
+        const newline = text.indexOf('\n', cursor);
+        let limit = newline < 0 ? end : Math.min(newline, end);
+        if (text[limit - 1] === '\r') limit--;
+        const raw = text.slice(cursor, limit);
+        const indent = raw.match(/^[ \t]*/)![0];
+        const comment = findLatexCommentStart(raw);
+        const body = (comment < 0 ? raw.replace(/[ \t]+$/, '') : raw).slice(indent.length);
+        if (body) {
+          const standalone = horizontal(text.slice(lineStart(cursor), cursor));
+          fragments.push({ start: cursor, content: cursor + indent.length, end: cursor + indent.length + body.length,
+            body, standalone, indent: standalone ? indent : '', endWidth: 0 });
+        }
+        cursor = newline < 0 || newline >= end ? end : newline + 1;
+      }
+      const standalone = fragments.filter((fragment) => fragment.standalone);
+      const base = standalone.length ? standalone.reduce((min, fragment) => Math.min(min, width(fragment.indent)), Infinity) : 0;
+      for (const fragment of standalone) {
+        let count = 0, removed = 0;
+        while (count < fragment.indent.length) {
+          const next = width(fragment.indent[count], removed);
+          if (next > base) break;
+          removed = next; count++;
+        }
+        fragment.indent = fragment.indent.slice(count);
+      }
+      cursor = end + 1;
+      return { start: cellStart, end, fragments, baseline: 0, inline: 0, before: 0 };
+    });
+    return [{ cells, start, first, end: structure.base + row.end }];
+  });
+  if (!rows.some((row) => text.slice(row.first, row.end).includes('\n'))) return [];
+
+  const withFirstCell = rows.filter((row) => row.cells[0].fragments.length);
+  const indent = (withFirstCell.length ? withFirstCell : rows).reduce((min, row) =>
+    Math.min(min, width(text.slice(row.start, row.first))), Infinity);
+  const columnCount = rows.reduce((max, row) => Math.max(max, row.cells.length), 0);
+  const starts = [indent], separators: number[] = [];
+  for (let column = 0; column < columnCount; column++) {
+    let end = starts[column];
+    let occupied = false;
+    for (const row of rows) {
+      const cell = row.cells[column];
+      if (!cell) continue;
+      cell.baseline = Math.round(starts[column]);
+      if (!column) cell.inline = cell.baseline;
+      for (const fragment of cell.fragments) {
+        const start = fragment.standalone ? width(fragment.indent, cell.baseline) : cell.inline;
+        fragment.endWidth = width(fragment.body, start);
+        end = Math.max(end, fragment.endWidth);
+        occupied = true;
+      }
+      const last = cell.fragments[cell.fragments.length - 1];
+      cell.before = last && lineStart(last.content) === lineStart(cell.end) ? last.endWidth :
+        cell.start >= lineStart(cell.end) && column > 0 ? cell.inline - 1 : 0;
+    }
+    separators[column] = end + (occupied ? 1 : 0);
+    starts[column + 1] = width('& ', separators[column]);
+    for (const row of rows) {
+      const cell = row.cells[column], next = row.cells[column + 1];
+      if (next) {
+        const actual = cell.before + Math.max(0, Math.round(separators[column] - cell.before));
+        next.inline = width('& ', actual);
+      }
+    }
+  }
+  const edits: TextEdit[] = [];
+  let unsafe = false;
+  function whitespace(start: number, end: number, after: string) {
+    const before = text.slice(start, end);
+    if (!horizontal(before) || start > end) { unsafe = true; return; }
+    if (before !== after) edits.push({ start, end, text: after });
+  }
+  function spaces(start: number, end: number, count: number) {
+    whitespace(start, end, ' '.repeat(Math.max(0, Math.round(count))));
+  }
+  const comments: { start: number; end: number; width: number }[] = [];
+  for (const row of rows) {
+    for (let column = 0; column < row.cells.length; column++) {
+      const cell = row.cells[column];
+      for (const fragment of cell.fragments) {
+        whitespace(fragment.start, fragment.content,
+          fragment.standalone ? ' '.repeat(cell.baseline) + fragment.indent : ' ');
+      }
+      const boundary = column === row.cells.length - 1 ? separators[columnCount - 1] : separators[column];
+      const last = cell.fragments[cell.fragments.length - 1];
+      if (last && lineStart(last.content) === lineStart(cell.end)) {
+        spaces(last.end, cell.end, boundary - cell.before);
+      } else {
+        const start = Math.max(cell.start, lineStart(cell.end));
+        spaces(start, cell.end, boundary - cell.before);
+      }
+    }
+    const newline = text.indexOf('\n', row.end);
+    const limit = newline < 0 ? text.length : newline;
+    const tail = text.slice(row.end, limit).replace(/\r$/, '');
+    const comment = findLatexCommentStart(tail);
+    if (comment >= 0) {
+      const body = tail.slice(0, comment).replace(/[ \t]+$/, '');
+      comments.push({ start: row.end + body.length, end: row.end + comment,
+        width: width(body, separators[columnCount - 1]) });
+    }
+  }
+  const commentColumn = comments.reduce((max, comment) => Math.max(max, comment.width + 1), 0);
+  for (const comment of comments) spaces(comment.start, comment.end, commentColumn - comment.width);
+  return unsafe ? [] : edits.sort((a, b) => a.start - b.start);
 }
 
 /** Synchronize columns and whitespace in one original-coordinate edit batch. */
@@ -303,18 +439,23 @@ export function getAutoAlignmentEdits(
   const columns = structure ? getAlignmentColumnEdits(structure, offset) : [];
   if (!columns.length) return getAlignmentEdits(text, offset, options, tabSize, characterWidths, snapshot, structure);
 
+  return composeEdits(text, columns, (expanded) =>
+    getAlignmentEdits(expanded, mapAlignmentOffset(offset, columns), options, tabSize, characterWidths));
+}
+
+function composeEdits(text: string, first: TextEdit[], next: (expanded: string) => TextEdit[]): TextEdit[] {
   // Source anchors compose insertions, deletions and whitespace changes without overlapping edits.
   type Piece = { text: string; source?: number };
   const pieces: Piece[] = [];
   let cursor = 0;
-  for (const edit of columns) {
+  for (const edit of first) {
     if (cursor < edit.start) pieces.push({ text: text.slice(cursor, edit.start), source: cursor });
     if (edit.text) pieces.push({ text: edit.text });
     cursor = edit.end;
   }
   if (cursor < text.length) pieces.push({ text: text.slice(cursor), source: cursor });
   const expanded = pieces.map((piece) => piece.text).join('');
-  const whitespace = getAlignmentEdits(expanded, mapAlignmentOffset(offset, columns), options, tabSize, characterWidths);
+  const whitespace = next(expanded);
   const formatted: Piece[] = [];
   let index = 0, within = 0, position = 0;
   function consume(end: number, retain: boolean) {

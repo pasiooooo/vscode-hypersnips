@@ -60,6 +60,7 @@ let insertingSnippet = false;
 let applyingLatexEdit = false;
 let aligningLatex = false;
 let alignmentTimer: ReturnType<typeof setTimeout> | undefined;
+let cursorRequest = 0;
 let latexContextOptionsCache:
     | {
         options: LatexContextOptions;
@@ -272,6 +273,7 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
             anchor: mapAlignmentOffset(editor.document.offsetAt(selection.anchor), alignmentEdits),
             active: mapAlignmentOffset(editor.document.offsetAt(selection.active), alignmentEdits),
         }));
+        const request = cursorRequest;
         aligningLatex = true;
         applyingLatexEdit = true;
         try {
@@ -283,7 +285,8 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
                     ), edit.text);
                 }
             }, { undoStopBefore: false, undoStopAfter: false });
-            if (applied && editor.document.version == version + 1) {
+            if (applied && editor.document.version == version + 1 && cursorRequest == request &&
+                vscode.window.activeTextEditor == editor) {
                 editor.selections = selections.map((selection) => new vscode.Selection(
                     editor.document.positionAt(selection.anchor),
                     editor.document.positionAt(selection.active)
@@ -435,6 +438,7 @@ async function fallbackTab() {
 }
 
 async function smartTab(editor: vscode.TextEditor) {
+    cursorRequest++;
     let snapshot = getDocumentState(editor.document);
     let text = snapshot.text;
     let options = getLatexContextOptions();
@@ -1053,6 +1057,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.window.onDidChangeTextEditorSelection((e) => {
+            if (e.kind) cursorRequest++;
             while (SNIPPET_STACK.length) {
                 if (e.selections.some((s) => SNIPPET_STACK[0].range.contains(s))) {
                     break;

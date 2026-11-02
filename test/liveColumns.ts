@@ -78,7 +78,17 @@ const multiline = String.raw`\begin{tabular}{lc}
   & d \\
   \bottomrule
 \end{tabular}`;
-assert.strictEqual(synchronize(multiline), multiline.replace('{lc}', '{lcl}').replace('& d ', '& d & '));
+assert.strictEqual(synchronize(multiline), String.raw`\begin{tabular}{lcl}
+  A                 & B & C \\
+  \[
+    \begin{aligned}
+      x &= y \\
+      z &= w
+    \end{aligned}
+  \]
+                    & d &   \\
+  \bottomrule
+\end{tabular}`);
 const verbatimCell = '\\begin{tabular}{ll}\n  a & b \\\\\n  \\verb!literal!\n  & c \\\\\n\\end{tabular}';
 assert.strictEqual(synchronize(verbatimCell), verbatimCell, 'an uncertain multiline cell is preserved as a whole');
 const unfinished = '\\begin{tabular}{lll}\n  A & B & C \\\\\n  \\[\n    x\n  \\]\n\\end{tabular}';

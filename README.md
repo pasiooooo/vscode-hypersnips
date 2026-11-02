@@ -30,7 +30,7 @@ vscode-hypersnips 是一个面向 VS Code 的 LaTeX 数学公式 snippet 扩展�
 
 自动对齐的列数以当前编辑行为基准，并以所有行中最后一个有内容的列为下限；因此可以删除多余的尾部空 `&`，其他行会同步移除空列。有内容的列不会因另一行少写了 `&` 而消失。已有 `l/c/r` 等列格式保留，确需更多列时追加 `l`；第一次建立表格时 Enter 仍可依据列声明补齐。
 
-多行单元格目前保留人工排版；新的共享列位置方案及单格、多格混合、全部多行的示例见[多行对齐设计提案](docs/multiline-alignment-design.md)，尚未启用。
+多行单元格与普通行共享列位置，保留原有源码换行和内部相对缩进；单格、多格混合、全部多行的示例及保守跳过范围见[多行对齐规则](docs/multiline-alignment-design.md)。
 
 ## 快速开始
 
@@ -195,7 +195,19 @@ c & d
 \end{bmatrix}
 ```
 
-当前支持 Tab 插入 ` & ` 的环境包括 `align`、`align*`、`aligned`、`alignedat`、`matrix`、`pmatrix`、`bmatrix`、`Bmatrix`、`vmatrix`、`Vmatrix`、`smallmatrix`、`cases`、`array`、`tabular`、`tabular*`、`tabularx`、`longtable`。
+分列环境的智能 Tab、Enter 和自动对齐使用同一套环境表，包含以下常见环境与变种：
+
+| 环境族 | 支持的名称 |
+| --- | --- |
+| AMS 对齐 | `align`、`align*`、`aligned`、`alignedat`、`alignedat*`（兼容保留）、`alignat`、`alignat*`、`xalignat`、`xalignat*`、`xxalignat`、`flalign`、`flalign*`、`split`、`eqnarray`、`eqnarray*` |
+| 分段函数 | `cases`、`cases*`、`dcases`、`dcases*`、`rcases`、`rcases*`、`drcases`、`drcases*` |
+| 矩阵 | `matrix`、`pmatrix`、`bmatrix`、`Bmatrix`、`vmatrix`、`Vmatrix`，以及各自的星号版本 |
+| 小矩阵 | `smallmatrix`、`psmallmatrix`、`bsmallmatrix`、`Bsmallmatrix`、`vsmallmatrix`、`Vsmallmatrix`，以及各自的星号版本 |
+| 表格 | `array`、`tabular`、`tabular*`、`tabularx`、`longtable` |
+
+`gather`、`gather*`、`gathered`、`lgathered`、`rgathered`、`multline`、`multline*`、`multlined` 支持智能换行；它们不使用 `&` 分列，因此不接管 Tab。用户自定义环境仍可通过前述 context 配置扩展。
+
+星号矩阵的可选 `[l/c/r]` 按 mathtools 默认规则紧接在 `\begin{...}` 后解析；`alignat` 等环境会先读取列对数，避免把参数算进单元格。环境定义参见 [AMS 源码](https://github.com/latex3/latex2e/blob/develop/required/amsmath/amsmath.dtx)与 [mathtools 源码](https://github.com/latex3/mathtools/blob/main/mathtools.dtx)。
 
 在这些环境中，Tab 优先执行列跳转或插列，不会被 snippet placeholder 跳转抢走；空单元格同样适用。例如 `text<光标> & & &` 按 Tab 后变为 `text & <光标> & &`，不会重复增加已有分隔符。转义 `\&`、花括号及嵌套环境中的分隔符不会被当成当前行的下一列。若 `&` 后缺少空格，会补一个空格再定位光标。
 

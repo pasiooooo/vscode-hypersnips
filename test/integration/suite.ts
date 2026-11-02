@@ -153,16 +153,61 @@ export async function run() {
     await delay(400);
     assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 2, 'formula editing does not add table separators');
     assert.strictEqual((editor.document.getText().match(/\\\\/g) || []).length, 2, 'formula Enter does not add a table row break');
-    assert.strictEqual(editor.document.lineAt(1).text, '  A & B \\\\');
+    assert.strictEqual(editor.document.lineAt(1).text, '  A   & B \\\\');
   });
   await test('adding a column to a multiline row updates its peers without changing the formula', async () => {
     const editor = await openMarked('\\begin{tabular}{@{}ll@{}}\n  A & B \\\\\n  \\[\n    \\frac{1}{2}\n  \\]\n  & value| \\\\\n\\end{tabular}');
     await configure(true);
     await type('&');
     await until(() => editor.document.lineAt(0).text === '\\begin{tabular}{@{}lll@{}}' &&
-      editor.document.lineAt(1).text === '  A & B & \\\\', 'multiline row grows peer and declaration');
+      editor.document.lineAt(1).text === '  A             & B     & \\\\', 'multiline row grows peer and declaration');
     assert.strictEqual(editor.document.getText().split('\n').slice(2, 5).join('\n'), '  \\[\n    \\frac{1}{2}\n  \\]');
-    assert.strictEqual(editor.document.lineAt(5).text, '  & value& \\\\');
+    assert.strictEqual(editor.document.lineAt(5).text, '                & value & \\\\');
+  });
+  await test('shared multiline columns preserve the caret and one-step undo/redo', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  Item & Value & Note \\\\\n  A| & \\(\n    \\frac{a+b}{c}\n  \\) & Demo \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await type('x');
+    const expected = '\\begin{tabular}{lll}\n  Item & Value           & Note \\\\\n  Ax   & \\(\n           \\frac{a+b}{c}\n         \\)              & Demo \\\\\n\\end{tabular}';
+    await until(() => editor.document.getText() === expected, 'shared source columns');
+    await until(() => editor.selection.active.line === 2 && editor.selection.active.character === 4, 'multiline edit caret');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'typing and multiline alignment undo together');
+    await vscode.commands.executeCommand('redo');
+    await until(() => editor.document.getText() === expected, 'multiline alignment redo');
+  });
+  await test('all multiline cells retain source order and separator line breaks', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  \\(\n    a+b\n  \\)\n  & \\(\n    c+d\n  \\)\n  & \\(\n    e|+f\n  \\) \\\\\n\\end{tabular}');
+    editor.selection = new vscode.Selection(editor.selection.active.translate(0, -1), editor.selection.active);
+    await configure(true);
+    await type('g');
+    const expected = '\\begin{tabular}{lll}\n  \\(\n    a+b\n  \\)\n        & \\(\n            c+d\n          \\)\n                & \\(\n                    g+f\n                  \\)    \\\\\n\\end{tabular}';
+    await until(() => editor.document.getText() === expected, 'all multiline staircase layout');
+    await until(() => editor.selection.active.line === 8 && editor.selection.active.character === 21, 'caret follows the shifted cell');
+  });
+  for (const [name, args] of [['dcases', ''], ['drcases*', ''], ['pmatrix*', '[r]'], ['psmallmatrix*', '[l]'], ['alignat', '{2}']]) {
+    await test(name + ' supports alignment, Tab and automatic math snippets', async () => {
+      const editor = await openMarked(`\\begin{${name}}${args}\n  a|&b \\\\\n  longer&c \\\\\n\\end{${name}}`);
+      await configure(true);
+      await type('x');
+      await until(() => editor.document.lineAt(1).text === '  ax     & b \\\\', 'variant auto alignment');
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      await until(() => editor.selection.active.character === 11, 'variant Tab navigation');
+      await type('mm');
+      try { await until(() => editor.document.getText().includes('MATHb'), 'variant math snippet context'); }
+      catch (error) {
+        console.error('Variant typing evidence: ' + JSON.stringify({ name, text: editor.document.getText(), selection: editor.selection }));
+        throw error;
+      }
+    });
+  }
+  await test('dcases first Enter seeds its two intrinsic columns', async () => {
+    const editor = await openMarked('\\begin{dcases}\n  a|\n\\end{dcases}');
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.document.lineAt(1).text === '  a & \\\\', 'dcases column completion');
+    assert.strictEqual(editor.document.lineCount, 4);
   });
   await test('a multiline row can be written across Enter presses before its explicit row ending', async () => {
     const editor = await openMarked('\\begin{tabular}{lll}\n  A & B & C \\\\\n  \\[\n    x\n  \\]|\n\\end{tabular}');

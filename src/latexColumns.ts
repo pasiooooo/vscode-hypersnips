@@ -78,10 +78,16 @@ function optionalPosition(text: string, index: number): number | undefined {
 }
 
 function declaration(text: string, name: string): { start: number; columns?: number; appendOffset?: number } | undefined {
-  if (!TABLES.has(name) && !/^alignedat\*?$/.test(name)) {
-    return { start: 0, columns: name === 'cases' ? 2 : undefined };
+  const counted = /^(?:alignedat\*?|x?alignat\*?|xxalignat)$/.test(name);
+  if (!TABLES.has(name) && !counted) {
+    const optional = /^[pbBvV]?(?:small)?matrix\*$/.test(name);
+    const alignedOption = name === 'aligned' && text[skipSpace(text, 0)] === '[';
+    const start = alignedOption ? optionalPosition(text, 0) :
+      optional && text[0] === '[' ? groupAt(text, 0, '[', ']')?.end : 0;
+    if (start === undefined) return undefined;
+    return { start, columns: /^(?:d?r?cases\*?|split)$/.test(name) ? 2 : /^eqnarray\*?$/.test(name) ? 3 : undefined };
   }
-  let index = optionalPosition(text, 0);
+  let index = TABLES.has(name) || /^alignedat\*?$/.test(name) ? optionalPosition(text, 0) : 0;
   if (index === undefined) return undefined;
   if (name === 'tabular*' || name === 'tabularx') {
     const width = groupAt(text, index);
@@ -175,6 +181,13 @@ function scanRows(text: string, start: number, name: string) {
           finish(commandStart, false);
           return { rows, closed: environmentName === name };
         }
+        continue;
+      }
+      if (/^(?:lstinline\*?|Verb\*?|mintinline)$/.test(word)) {
+        // Their package-specific options/delimiters are opaque; never parse literal row/column tokens.
+        if (!nested.length) { valid = false; touch(commandStart, index); }
+        const newline = text.indexOf('\n', index);
+        index = newline < 0 ? text.length : newline;
         continue;
       }
       if (word === 'verb' || word === 'verb*') {
