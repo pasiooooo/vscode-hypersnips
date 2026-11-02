@@ -48,14 +48,11 @@ const fixtures = [
 \end{align}`,
 ];
 
-for (const [fixture, text] of fixtures.entries()) {
+for (const text of fixtures) {
   for (const offset of [text.indexOf('\n') + 1, text.indexOf('&'), text.lastIndexOf('&')]) {
     const state = new LatexDocumentState(text);
     const actual = getAlignmentEdits(text, offset, {}, 8, widths, state);
-    // The outer nested fixture now includes its multiline cell width; other scopes retain the frozen behavior.
-    if (fixture !== 3 || state.environmentPairAt(offset)?.beginStart !== 0) {
-      assert.deepStrictEqual(actual, reference.getAlignmentEdits(text, offset, {}, 8, widths));
-    } else assert.deepStrictEqual(actual, getAlignmentEdits(text, offset, {}, 8, widths));
+    assert.deepStrictEqual(actual, reference.getAlignmentEdits(text, offset, {}, 8, widths));
     const formatted = applyTextEditsToString(text, actual);
     assert.strictEqual(formatted.replace(/[ \t]/g, ''), text.replace(/[ \t]/g, ''),
       'alignment changes whitespace only');
@@ -127,8 +124,9 @@ async function testAffectedEnvironments() {
 \begin{align}
   a&=b \\ % eligible
   longer&=c \\
-  \text{ignored % excluded
-  }
+  \begin{verbatim}
+    ignored % excluded
+  \end{verbatim}
 \end{align}
 \begin{matrix}
   x&y \\
@@ -189,7 +187,7 @@ async function testAffectedEnvironments() {
   exported.schedule!(editor, event);
   await timer!();
   assert.strictEqual(offsets.length, 2, 'each eligible affected environment is aligned once');
-  assert.ok(offsets.every((offset) => !new LatexDocumentState(text).contextAt(offset).inTextLikeCommand),
+  assert.ok(offsets.every((offset) => !new LatexDocumentState(text).contextAt(offset).inVerbatimLikeEnvironment),
     'ineligible positions cannot replace an eligible representative for the same environment');
   const state = new LatexDocumentState(text);
   const bodies = [changed[0], changed[3]].map((offset) => {

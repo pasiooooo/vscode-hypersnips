@@ -43,32 +43,56 @@ function positiveInteger(value: string): number | undefined {
   return count >= 1 && count <= MAX_COLUMNS ? count : undefined;
 }
 
-function specColumns(spec: string, depth = 0): { columns: number; appendOffset: number } | undefined {
+function specColumns(spec: string, depth = 0, keepColumns?: number): {
+  columns: number; appendOffset: number; columnEnds: number[]; prefix?: string; trailing: string; trailingInside: string;
+} | undefined {
   if (depth > MAX_SPEC_DEPTH) return undefined;
   let columns = 0, appendOffset = 0;
+  let prefix: string | undefined, trailingInside = '';
+  const columnEnds: number[] = [];
   for (let index = 0; index < spec.length;) {
     const char = spec[index++];
     if (/\s/.test(char) || char === '|') continue;
-    if ('lcrX'.includes(char)) { columns++; appendOffset = index; }
+    if ('lcrX'.includes(char)) { columns++; appendOffset = index; columnEnds[columns] = index; trailingInside = ''; }
     else if ('pmb@!><'.includes(char)) {
+      const modifierStart = index - 1;
       const group = groupAt(spec, index);
       if (!group) return undefined;
       index = group.end;
-      if ('pmb'.includes(char)) columns++;
-      if ('pmb<'.includes(char)) appendOffset = index;
+      if ('pmb'.includes(char)) { columns++; trailingInside = ''; }
+      if (char === '<') {
+        if (prefix !== undefined && keepColumns === columns) prefix += trailingInside + spec.slice(modifierStart, index);
+        trailingInside = '';
+      }
+      if ('pmb<'.includes(char)) { appendOffset = index; columnEnds[columns] = index; }
     } else if (char === '*') {
+      const repetitionStart = index - 1;
       const count = groupAt(spec, index);
       const repeated = count && groupAt(spec, count.end);
       const times = count && positiveInteger(count.value);
       const width = repeated && specColumns(repeated.value, depth + 1);
       if (!repeated || !times || !width) return undefined;
+      if (keepColumns !== undefined && columns < keepColumns && keepColumns <= columns + times * width.columns) {
+        const kept = keepColumns - columns;
+        const full = Math.floor((kept - (width.trailing ? 1 : 0)) / width.columns), partial = kept - full * width.columns;
+        const tail = partial ? specColumns(repeated.value, depth + 1, partial)?.prefix : '';
+        if (tail === undefined) return undefined;
+        prefix = spec.slice(0, repetitionStart) + (full ? `*{${full}}{${repeated.value}}` : '') + tail;
+      }
       columns += times * width.columns;
       index = repeated.end;
       appendOffset = index;
+      trailingInside = width.trailing;
+      if (!trailingInside) columnEnds[columns] = index;
     } else return undefined;
     if (columns > MAX_COLUMNS) return undefined;
   }
-  return columns ? { columns, appendOffset } : undefined;
+  if (keepColumns !== undefined && keepColumns <= columns) {
+    const cut = columnEnds[keepColumns];
+    prefix ??= cut === undefined ? undefined : spec.slice(0, cut);
+  }
+  // Only the whole preamble's final boundary survives shrinking.
+  return columns ? { columns, appendOffset, columnEnds, prefix, trailing: trailingInside + spec.slice(appendOffset), trailingInside } : undefined;
 }
 
 function optionalPosition(text: string, index: number): number | undefined {
@@ -77,7 +101,9 @@ function optionalPosition(text: string, index: number): number | undefined {
   return groupAt(text, index, '[', ']')?.end;
 }
 
-function declaration(text: string, name: string): { start: number; columns?: number; appendOffset?: number } | undefined {
+function declaration(text: string, name: string): {
+  start: number; columns?: number; appendOffset?: number; columnEnds?: number[]; specificationStart?: number; trailingInside?: string;
+} | undefined {
   const counted = /^(?:alignedat\*?|x?alignat\*?|xxalignat)$/.test(name);
   if (!TABLES.has(name) && !counted) {
     const optional = /^[pbBvV]?(?:small)?matrix\*$/.test(name);
@@ -102,6 +128,9 @@ function declaration(text: string, name: string): { start: number; columns?: num
   const count = columns && (TABLES.has(name) ? columns : columns * 2);
   if (!count || count > MAX_COLUMNS) return undefined;
   return { start: argument.end, columns: count,
+    specificationStart: specification ? argument.end - 1 - argument.value.length : undefined,
+    trailingInside: specification?.trailingInside,
+    columnEnds: specification?.columnEnds.map((end) => argument.end - 1 - argument.value.length + end),
     appendOffset: specification ? argument.end - 1 - argument.value.length + specification.appendOffset : undefined };
 }
 
@@ -298,17 +327,41 @@ export function getAlignmentStructure(
   const source = sanitizeLatexForParsing(text.slice(frame.beginEnd, end));
   const declared = declaration(source, frame.name);
   if (!declared) return undefined;
-  return { ...scanRows(source, declared.start, frame.name), source, declared, base: frame.beginEnd };
+  return { ...scanRows(source, declared.start, frame.name), source, declared, base: frame.beginEnd,
+    declarationText: text.slice(frame.beginEnd, frame.beginEnd + declared.start) };
 }
 
 export type AlignmentStructure = NonNullable<ReturnType<typeof getAlignmentStructure>>;
 
-export function getAlignmentColumnEdits(structure: AlignmentStructure, offset?: number): TextEdit[] {
+function columnSpecificationEdit(structure: AlignmentStructure, expected: number, shrink: boolean): TextEdit | undefined {
+  const { columns, appendOffset, columnEnds } = structure.declared;
+  if (!columns || appendOffset === undefined) return;
+  if (expected > columns) {
+    const start = structure.base + appendOffset;
+    return { start, end: start, text: 'l'.repeat(expected - columns) };
+  }
+  if (shrink && expected < columns && columnEnds?.[expected] !== undefined &&
+      !structure.declarationText.slice(columnEnds[expected], appendOffset).includes('%')) {
+    return { start: structure.base + columnEnds[expected], end: structure.base + appendOffset, text: structure.declared.trailingInside || '' };
+  }
+  const { specificationStart, start: declarationEnd } = structure.declared;
+  if (shrink && expected < columns && specificationStart !== undefined) {
+    const raw = structure.declarationText.slice(specificationStart, declarationEnd - 1);
+    if (raw.includes('%')) return;
+    const specification = specColumns(raw, 0, expected);
+    if (specification?.prefix !== undefined) return {
+      start: structure.base + specificationStart, end: structure.base + declarationEnd - 1, text: specification.prefix + specification.trailing,
+    };
+  }
+}
+
+export function getAlignmentColumnEdits(structure: AlignmentStructure, offset?: number, shrinkIncomplete = false): TextEdit[] {
   if (!structure.closed) return [];
-  const rows = structure.rows.filter((row) => row.valid && (row.content || (row.complete && !row.nonData)));
+  const position = offset === undefined ? undefined : offset - structure.base;
+  const rows = structure.rows.filter((row) => row.valid && (row.content || (row.complete && !row.nonData) ||
+    (shrinkIncomplete && !row.nonData && position !== undefined && row.start <= position && position <= row.end)));
   if (!rows.length) return [];
   const widest = rows.reduce((width, row) => Math.max(width, row.columns), 0);
-  const position = offset === undefined ? undefined : offset - structure.base;
   const active = position === undefined ? undefined : rows.find((row) =>
     row.start <= position && position <= row.end && position >= row.controlEnd && (row.content || row.complete));
   const occupied = rows.reduce((width, row) => Math.max(width, row.occupiedColumns), 1);
@@ -327,21 +380,19 @@ export function getAlignmentColumnEdits(structure: AlignmentStructure, offset?: 
       }
     }
   }
-  const { columns, appendOffset } = structure.declared;
-  if (columns && appendOffset !== undefined && expected > columns) {
-    const start = structure.base + appendOffset;
-    edits.push({ start, end: start, text: 'l'.repeat(expected - columns) });
-  }
+  const specification = columnSpecificationEdit(structure, expected, shrinkIncomplete || rows.some((row) => row.complete));
+  if (specification) edits.push(specification);
   return edits.sort((a, b) => a.start - b.start);
 }
 
-/** Complete trailing cells and extend known declarations; ambiguous input stays untouched. */
+/** Complete trailing cells and synchronize known declarations; ambiguous input stays untouched. */
 export function getAlignmentColumnCompletion(
   text: string,
   offset: number,
   frame: LatexEnvironmentFrame,
   snapshot?: LatexDocumentSnapshot,
-  structure?: AlignmentStructure
+  structure?: AlignmentStructure,
+  shrink = false
 ): { missing: number; columnSpecEdit?: TextEdit } {
   if (!Number.isInteger(offset) || offset < frame.beginEnd || offset > text.length || frame.beginEnd < 0) return { missing: 0 };
   structure ??= getAlignmentStructure(text, frame, snapshot);
@@ -360,11 +411,8 @@ export function getAlignmentColumnCompletion(
   }
   const completed = rows.some((row) => row.valid && row.complete && (row.content || !row.nonData));
   // The declaration only seeds a new table; it must not resurrect deleted columns in existing rows.
-  const expected = Math.max(current.columns, peerColumns || (completed ? 0 : declared.columns || 0));
-  let columnSpecEdit: TextEdit | undefined;
-  if (declared.appendOffset !== undefined && declared.columns && expected > declared.columns) {
-    const start = frame.beginEnd + declared.appendOffset;
-    columnSpecEdit = { start, end: start, text: 'l'.repeat(expected - declared.columns) };
-  }
+  const occupied = rows.reduce((width, row) => row.valid ? Math.max(width, row.occupiedColumns) : width, 1);
+  const expected = Math.max(current.columns, shrink ? occupied : peerColumns || (completed ? 0 : declared.columns || 0));
+  const columnSpecEdit = columnSpecificationEdit(structure, expected, shrink);
   return { missing: expected - current.columns, columnSpecEdit };
 }

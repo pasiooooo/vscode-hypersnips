@@ -6,6 +6,7 @@ import { openExplorer } from './openFileExplorer';
 import { HSnippet } from './hsnippet';
 import { HSnippetInstance } from './hsnippetInstance';
 import { getAutoAlignmentEdits, mapAlignmentOffset } from './latexAlignment';
+import { getAlignmentStructure } from './latexColumns';
 import { getFontCharacterWidths } from './fontMetrics';
 import { parse } from './parser';
 import { getSnippetDir } from './utils';
@@ -61,6 +62,10 @@ let applyingLatexEdit = false;
 let aligningLatex = false;
 let alignmentTimer: ReturnType<typeof setTimeout> | undefined;
 let cursorRequest = 0;
+let columnRemovalSequence = 0;
+let pendingColumnRemovals = new WeakMap<vscode.TextDocument, {
+    version: number; tokens: Map<number, { id: number; offset: number }>;
+}>();
 let latexContextOptionsCache:
     | {
         options: LatexContextOptions;
@@ -203,12 +208,59 @@ function isAutoAlignEnabled(document: vscode.TextDocument) {
     }).get<boolean>('autoAlign.enabled', true);
 }
 
-function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocumentChangeEvent) {
+function trackColumnRemovals(event: vscode.TextDocumentChangeEvent, previous?: LatexDocumentState) {
+    const pending = pendingColumnRemovals.get(event.document);
+    if (pending?.version == event.document.version) return;
+    if (!pending && (aligningLatex || !event.contentChanges.some((change) =>
+        previous?.text.slice(change.rangeOffset, change.rangeOffset + change.rangeLength).includes('&')))) return;
+    const changes = [...event.contentChanges].sort((a, b) => a.rangeOffset - b.rangeOffset);
+    function mapBegin(offset: number, retainInside = false): number | undefined {
+        let delta = 0;
+        for (const change of changes) {
+            if (change.rangeLength && change.rangeOffset <= offset && offset < change.rangeOffset + change.rangeLength) {
+                return retainInside ? change.rangeOffset + delta + Math.min(offset - change.rangeOffset, change.text.length) : undefined;
+            }
+            if (change.rangeOffset + change.rangeLength <= offset) delta += change.text.length - change.rangeLength;
+        }
+        return offset + delta;
+    }
+    const tokens = new Map<number, { id: number; offset: number }>();
+    if (!event.reason && pending?.version == previous?.version) {
+        for (const [begin, token] of pending?.tokens || []) {
+            const mapped = mapBegin(begin);
+            if (mapped !== undefined) tokens.set(mapped, { id: token.id, offset: mapBegin(token.offset, true)! });
+        }
+    }
+    for (const change of changes) {
+        if (!aligningLatex && previous && previous.text.slice(change.rangeOffset, change.rangeOffset + change.rangeLength).includes('&')) {
+            const pair = previous.environmentPairAt(change.rangeOffset);
+            if (pair && change.rangeOffset >= pair.beginEnd && change.rangeOffset + change.rangeLength <= pair.endStart) {
+                const structure = getAlignmentStructure(previous.text, pair, previous);
+                if (structure?.rows.some((row) => row.valid && row.separators.some((separator) => {
+                    const offset = structure.base + separator.start;
+                    return offset >= change.rangeOffset && offset < change.rangeOffset + change.rangeLength;
+                }))) {
+                    const begin = mapBegin(pair.beginStart);
+                    if (begin !== undefined && !event.reason) tokens.set(begin,
+                        { id: ++columnRemovalSequence, offset: mapBegin(change.rangeOffset, true)! });
+                }
+            }
+        }
+    }
+    if (tokens.size) pendingColumnRemovals.set(event.document, { version: event.document.version, tokens });
+    else pendingColumnRemovals.delete(event.document);
+}
+
+function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocumentChangeEvent, previous?: LatexDocumentState) {
+    if (event.reason || !isLatexLikeDocument(event.document) ||
+        !event.contentChanges.length || !isAutoAlignEnabled(event.document)) {
+        if (alignmentTimer) clearTimeout(alignmentTimer);
+        pendingColumnRemovals.delete(event.document);
+        return;
+    }
+    trackColumnRemovals(event, previous);
     if (aligningLatex) return;
     if (alignmentTimer) clearTimeout(alignmentTimer);
-    if (event.reason || !isLatexLikeDocument(event.document) ||
-        !event.contentChanges.length || !isAutoAlignEnabled(event.document)) return;
-
     let version = event.document.version;
     let offsets: number[] = [];
     let delta = 0;
@@ -227,20 +279,23 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
             !isAutoAlignEnabled(editor.document)) return;
         let snapshot = getDocumentState(editor.document);
         let text = snapshot.text;
+        const removals = pendingColumnRemovals.get(editor.document)?.tokens || new Map<number, { id: number; offset: number }>();
+        for (const removal of removals.values()) offsets.push(removal.offset);
         let options = getLatexContextOptions();
         let alignmentEnvironments = new Set([
             ...ALIGNMENT_SEPARATOR_ENVIRONMENTS,
             ...(options.extraAlignmentEnvironments || []),
         ]);
-        let environments = new Map<string, { offset: number; beginEnd: number; endStart: number }>();
+        let environments = new Map<string, { offset: number; beginEnd: number; endStart: number; shrinkIncomplete: boolean }>();
         for (let offset of offsets) {
             let context = snapshot.contextAt(offset);
-            if (context.inMarkdownCode || context.inTextLikeCommand || context.inVerbatimLikeEnvironment) continue;
+            if (context.inMarkdownCode || context.inVerbatimLikeEnvironment) continue;
             if (!context.environmentStack.some((name) => alignmentEnvironments.has(name))) continue;
             let pair = snapshot.environmentPairAt(offset);
             if (pair && alignmentEnvironments.has(pair.name)) {
-                environments.set(`${pair.beginStart}:${pair.endEnd}`,
-                    { offset, beginEnd: pair.beginEnd, endStart: pair.endStart });
+                const key = `${pair.beginStart}:${pair.endEnd}`;
+                environments.set(key, { offset, beginEnd: pair.beginEnd, endStart: pair.endStart,
+                    shrinkIncomplete: removals.has(pair.beginStart) });
             }
         }
         if (!environments.size) return;
@@ -261,13 +316,28 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
         let edits = new Map<number, TextEdit>();
         const activeOffset = editor.document.offsetAt(editor.selection.active);
         const activePair = snapshot.environmentPairAt(activeOffset);
-        for (let { offset, beginEnd, endStart } of environments.values()) {
+        const consumed = new Set<number>();
+        for (let { offset, beginEnd, endStart, shrinkIncomplete } of environments.values()) {
             const rowOffset = activeOffset >= beginEnd && activeOffset <= endStart && activePair?.beginEnd == beginEnd ? activeOffset : offset;
-            for (let edit of getAutoAlignmentEdits(text, rowOffset, options, tabSize, characterWidths, snapshot)) {
+            if (shrinkIncomplete) {
+                const pair = snapshot.environmentPairAt(offset);
+                const removal = pair && removals.get(pair.beginStart);
+                const structure = pair && getAlignmentStructure(text, pair, snapshot);
+                const row = removal && structure?.rows.find((row) => row.start <= removal.offset - structure.base && removal.offset - structure.base <= row.end);
+                if (structure?.closed && row?.valid && (row.content || !row.nonData)) consumed.add(removal!.id);
+            }
+            for (let edit of getAutoAlignmentEdits(text, rowOffset, options, tabSize, characterWidths, snapshot, shrinkIncomplete)) {
                 edits.set(edit.start, edit);
             }
         }
-        if (!edits.size) return;
+        function consumeRemovals() {
+            const pending = pendingColumnRemovals.get(editor.document);
+            for (const [begin, token] of pending?.tokens || []) {
+                if (consumed.has(token.id)) pending!.tokens.delete(begin);
+            }
+            if (!pending?.tokens.size) pendingColumnRemovals.delete(editor.document);
+        }
+        if (!edits.size) { consumeRemovals(); return; }
         let alignmentEdits = [...edits.values()];
         let selections = editor.selections.map((selection) => ({
             anchor: mapAlignmentOffset(editor.document.offsetAt(selection.anchor), alignmentEdits),
@@ -285,6 +355,7 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
                     ), edit.text);
                 }
             }, { undoStopBefore: false, undoStopAfter: false });
+            if (applied) consumeRemovals();
             if (applied && editor.document.version == version + 1 && cursorRequest == request &&
                 vscode.window.activeTextEditor == editor) {
                 editor.selections = selections.map((selection) => new vscode.Selection(
@@ -301,6 +372,11 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
     }, 150);
 }
 
+function hasPendingColumnRemoval(editor: vscode.TextEditor, snapshot: LatexDocumentState, offset: number) {
+    const frame = snapshot.contextAt(offset).currentEnvironmentFrame;
+    return Boolean(frame && pendingColumnRemovals.get(editor.document)?.tokens.has(frame.beginStart));
+}
+
 async function smartEnter(editor: vscode.TextEditor) {
     if (editor.selections.length != 1 || !editor.selection.isEmpty) {
         await typeText('\n');
@@ -312,7 +388,8 @@ async function smartEnter(editor: vscode.TextEditor) {
     let offset = editor.document.offsetAt(editor.selection.active);
     const autoAlign = isAutoAlignEnabled(editor.document);
     let plan = getSmartEnterPlan(text, offset, getLatexContextOptions(), snapshot, autoAlign,
-        editor.document.eol == vscode.EndOfLine.CRLF ? '\r\n' : '\n');
+        editor.document.eol == vscode.EndOfLine.CRLF ? '\r\n' : '\n',
+        hasPendingColumnRemoval(editor, snapshot, offset));
 
     if (!plan.handled) {
         await typeText('\n');
@@ -352,7 +429,8 @@ async function recoverSmartEnterAfterPlainEnter(
         getLatexContextOptions(),
         previous,
         editor.selections.length == 1 && autoAlign,
-        editor.document.eol == vscode.EndOfLine.CRLF ? '\r\n' : '\n'
+        editor.document.eol == vscode.EndOfLine.CRLF ? '\r\n' : '\n',
+        hasPendingColumnRemoval(editor, previous ?? current, change.rangeOffset)
     );
 
     if (!plan.handled || editor.document.version != current.version || vscode.window.activeTextEditor != editor) {
@@ -972,7 +1050,7 @@ export function activate(context: vscode.ExtensionContext) {
             try {
                 if (activeEditor && e.document == activeEditor.document) {
                     updateMathContext(activeEditor);
-                    scheduleAlignment(activeEditor, e);
+                    scheduleAlignment(activeEditor, e, states?.previous);
                 }
 
                 if (SNIPPET_STACK.length && SNIPPET_STACK[0].editor.document == e.document) {
@@ -1036,6 +1114,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.workspace.onDidCloseTextDocument((document) => {
         documentStates.delete(document);
+        pendingColumnRemovals.delete(document);
     }));
 
     // Remove any stale snippet instances.
@@ -1070,9 +1149,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration((event) => {
-            if (event.affectsConfiguration('hsnips.autoAlign') && alignmentTimer) {
-                clearTimeout(alignmentTimer);
+            if (event.affectsConfiguration('hsnips.autoAlign')) {
+                if (alignmentTimer) clearTimeout(alignmentTimer);
                 alignmentTimer = undefined;
+                pendingColumnRemovals = new WeakMap();
             }
             if (event.affectsConfiguration('hsnips.context')) {
                 documentStates = new WeakMap();

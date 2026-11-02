@@ -110,7 +110,8 @@ export function getSmartEnterPlan(
   options: LatexContextOptions = {},
   snapshot?: LatexDocumentSnapshot,
   completeAlignmentColumns = false,
-  eol?: '\n' | '\r\n'
+  eol?: '\n' | '\r\n',
+  shrinkAlignmentColumns = false
 ): SmartEnterPlan {
   let context = getLatexContext(text, offset, options, snapshot);
   if (!context.canSmartEnter && !(completeAlignmentColumns && context.canSmartTab)) {
@@ -151,7 +152,7 @@ export function getSmartEnterPlan(
         (!existingBreak && row.dataStart !== undefined && frame.beginEnd + row.dataStart < lineBounds.start))) {
       return { handled: false, edits: [] };
     }
-    ({ missing, columnSpecEdit } = getAlignmentColumnCompletion(text, lineBounds.start + bodyEnd, frame, snapshot, structure));
+    ({ missing, columnSpecEdit } = getAlignmentColumnCompletion(text, lineBounds.start + bodyEnd, frame, snapshot, structure, shrinkAlignmentColumns));
   }
   if (completeAlignmentColumns && existingBreak) {
     if (!missing && !columnSpecEdit) return { handled: false, edits: [] };
@@ -197,9 +198,10 @@ export function getSmartEnterRecoveryPlan(
   options: LatexContextOptions = {},
   snapshot?: LatexDocumentSnapshot,
   completeAlignmentColumns = false,
-  eol?: '\n' | '\r\n'
+  eol?: '\n' | '\r\n',
+  shrinkAlignmentColumns = false
 ): SmartEnterPlan {
-  let desiredPlan = getSmartEnterPlan(beforeEnterText, offsetBeforeEnter, options, snapshot, completeAlignmentColumns, eol);
+  let desiredPlan = getSmartEnterPlan(beforeEnterText, offsetBeforeEnter, options, snapshot, completeAlignmentColumns, eol, shrinkAlignmentColumns);
   if (!desiredPlan.handled || typeof desiredPlan.cursorOffset != 'number') {
     return { handled: false, edits: [] };
   }

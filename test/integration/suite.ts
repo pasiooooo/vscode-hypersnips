@@ -94,7 +94,7 @@ export async function run() {
     const before = editor.document.getText();
     await configure(true);
     await vscode.commands.executeCommand('deleteLeft');
-    const expected = '\\begin{tabular}{lll}\n  a & b \\\\\n  c & d \\\\\n\\end{tabular}';
+    const expected = '\\begin{tabular}{ll}\n  a & b \\\\\n  c & d \\\\\n\\end{tabular}';
     const compact = (value: string) => value.replace(/[ \t]/g, '');
     await until(() => compact(editor.document.getText()) === compact(expected), 'deleted empty column stays deleted in every row');
     const after = editor.document.getText();
@@ -110,6 +110,7 @@ export async function run() {
     await configure(true);
     await vscode.commands.executeCommand('deleteLeft');
     await until(() => !editor.document.getText().includes('&'), 'all empty second columns are removed');
+    assert.strictEqual(editor.document.lineAt(0).text, '\\begin{tabular}{l}');
     const row = editor.document.getText().indexOf('\n  b') + 3;
     editor.selection = new vscode.Selection(editor.document.positionAt(row + 1), editor.document.positionAt(row + 1));
     await vscode.commands.executeCommand('type', { text: 'x' });
@@ -153,24 +154,24 @@ export async function run() {
     await delay(400);
     assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 2, 'formula editing does not add table separators');
     assert.strictEqual((editor.document.getText().match(/\\\\/g) || []).length, 2, 'formula Enter does not add a table row break');
-    assert.strictEqual(editor.document.lineAt(1).text, '  A   & B \\\\');
+    assert.strictEqual(editor.document.lineAt(1).text, '  A & B \\\\');
   });
   await test('adding a column to a multiline row updates its peers without changing the formula', async () => {
     const editor = await openMarked('\\begin{tabular}{@{}ll@{}}\n  A & B \\\\\n  \\[\n    \\frac{1}{2}\n  \\]\n  & value| \\\\\n\\end{tabular}');
     await configure(true);
     await type('&');
     await until(() => editor.document.lineAt(0).text === '\\begin{tabular}{@{}lll@{}}' &&
-      editor.document.lineAt(1).text === '  A             & B     & \\\\', 'multiline row grows peer and declaration');
+      editor.document.lineAt(1).text === '  A & B & \\\\', 'multiline row grows peer and declaration');
     assert.strictEqual(editor.document.getText().split('\n').slice(2, 5).join('\n'), '  \\[\n    \\frac{1}{2}\n  \\]');
-    assert.strictEqual(editor.document.lineAt(5).text, '                & value & \\\\');
+    assert.strictEqual(editor.document.lineAt(5).text, '  & value& \\\\');
   });
-  await test('shared multiline columns preserve the caret and one-step undo/redo', async () => {
+  await test('multiline cell formatting stays reverted while preserving typing and undo', async () => {
     const editor = await openMarked('\\begin{tabular}{lll}\n  Item & Value & Note \\\\\n  A| & \\(\n    \\frac{a+b}{c}\n  \\) & Demo \\\\\n\\end{tabular}');
     const before = editor.document.getText();
     await configure(true);
     await type('x');
-    const expected = '\\begin{tabular}{lll}\n  Item & Value           & Note \\\\\n  Ax   & \\(\n           \\frac{a+b}{c}\n         \\)              & Demo \\\\\n\\end{tabular}';
-    await until(() => editor.document.getText() === expected, 'shared source columns');
+    const expected = before.replace('\n  A &', '\n  Ax &');
+    await until(() => editor.document.getText() === expected, 'keep handwritten multiline layout');
     await until(() => editor.selection.active.line === 2 && editor.selection.active.character === 4, 'multiline edit caret');
     await vscode.commands.executeCommand('undo');
     await until(() => editor.document.getText() === before, 'typing and multiline alignment undo together');
@@ -182,9 +183,50 @@ export async function run() {
     editor.selection = new vscode.Selection(editor.selection.active.translate(0, -1), editor.selection.active);
     await configure(true);
     await type('g');
-    const expected = '\\begin{tabular}{lll}\n  \\(\n    a+b\n  \\)\n        & \\(\n            c+d\n          \\)\n                & \\(\n                    g+f\n                  \\)    \\\\\n\\end{tabular}';
-    await until(() => editor.document.getText() === expected, 'all multiline staircase layout');
-    await until(() => editor.selection.active.line === 8 && editor.selection.active.character === 21, 'caret follows the shifted cell');
+    const expected = '\\begin{tabular}{lll}\n  \\(\n    a+b\n  \\)\n  & \\(\n    c+d\n  \\)\n  & \\(\n    g+f\n  \\) \\\\\n\\end{tabular}';
+    await until(() => editor.document.getText() === expected, 'all multiline cells retain handwritten indentation');
+    await delay(400);
+    assert.strictEqual(editor.document.getText(), expected);
+    assert.strictEqual(editor.selection.active.character, 5);
+  });
+  await test('an unfinished first row can remove its last empty column format', async () => {
+    const editor = await openMarked('\\begin{tabular}{@{}ll@{}}\n  a &|\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await vscode.commands.executeCommand('deleteLeft');
+    await until(() => editor.document.lineAt(0).text === '\\begin{tabular}{@{}l@{}}', 'unfinished row column format shrinks');
+    assert.ok(!editor.document.getText().includes('&'));
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'undo restores separator and column specification together');
+  });
+  for (const command of ['hsnips.smartEnter', 'type']) {
+    await test('column deletion survives immediate typing and ' + command, async () => {
+      const editor = await openMarked('\\begin{tabular}{ll}\n  a &|\n\\end{tabular}');
+      await configure(true);
+      await vscode.commands.executeCommand('deleteLeft');
+      await type('x');
+      await vscode.commands.executeCommand(command, ...(command === 'type' ? [{ text: '\n' }] : []));
+      await until(() => editor.document.lineAt(0).text === '\\begin{tabular}{l}' && editor.document.lineCount === 4,
+        'rapid deletion, typing and Enter keep a single column');
+      await delay(400);
+      assert.ok(!editor.document.getText().includes('&'));
+      assert.strictEqual(editor.document.lineAt(0).text, '\\begin{tabular}{l}');
+    });
+  }
+  await test('dcases aligns its single row without Enter', async () => {
+    const editor = await openMarked('\\begin{dcases}\n  x|&y \\\\\n\\end{dcases}');
+    await configure(true);
+    await type('q');
+    await until(() => editor.document.lineAt(1).text === '  xq & y \\\\', 'single-row dcases spacing');
+    assert.strictEqual(editor.document.lineCount, 3);
+  });
+  await test('dcases aligns while typing inside text commands', async () => {
+    const editor = await openMarked('\\begin{dcases}\n  x & \\text{if foo|} \\\\\n  longer & \\text{otherwise} \\\\\n\\end{dcases}');
+    await configure(true);
+    await type('x');
+    await until(() => editor.document.lineAt(1).text.startsWith('  x      & \\text{if foox}'), 'text command edits trigger alignment');
+    await until(() => editor.document.lineAt(1).text.slice(0, editor.selection.active.character).endsWith('foox'), 'caret stays inside the condition');
+    assert.strictEqual(editor.document.lineCount, 4);
   });
   for (const [name, args] of [['dcases', ''], ['drcases*', ''], ['pmatrix*', '[r]'], ['psmallmatrix*', '[l]'], ['alignat', '{2}']]) {
     await test(name + ' supports alignment, Tab and automatic math snippets', async () => {
