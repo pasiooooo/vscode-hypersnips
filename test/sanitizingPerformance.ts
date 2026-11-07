@@ -1,0 +1,81 @@
+import * as assert from 'assert';
+import { performance } from 'perf_hooks';
+import { sanitizeLatexForParsing as current } from '../src/latexContext';
+import { sanitizeLatexForParsing as baseline } from './reference/latexContext';
+
+const fixtures = [
+  'Example text with $x + y$ and \\alpha.\nSecond line.\r\n',
+  '\\begin{align}\na &= b \\\\\n\\end{align}',
+  '~~~\nplain % comment\n~~~\nend',
+  '```\ntext $x$\n```\nafter',
+  'before <!-- hidden % body --> after',
+  'before <!-- unfinished comment',
+  'a `inline % code` b % comment\nc \\% escaped',
+  'a % hidden\nb \\% visible\nc \\\\% hidden',
+  '~~ not a fence\n<not a comment>\n',
+  'Inline `code` and ~symbol~ with a % comment\n',
+  'word~~~suffix\nno opening fence',
+  '\u793a\u4f8b \u0301 \ud83d\ude00 and tabs\t',
+];
+for (const text of fixtures) {
+  for (let offset = 0; offset <= text.length; offset++) {
+    const prefix = text.slice(0, offset);
+    assert.strictEqual(current(prefix), baseline(prefix));
+    assert.strictEqual(current(prefix, [{ start: 0, end: 4 }]),
+      baseline(prefix, [{ start: 0, end: 4 }]), 'caller-supplied mask ranges are respected');
+  }
+}
+const plain = 'Example text with $x + y$ and \\alpha.\n'.repeat(30000);
+const commented = 'Example \\% visible % hidden\r\nnext \\\\% hidden\r'.repeat(24000);
+const expectedCommented = baseline(commented);
+let seed = 563983;
+const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+const fragments = ['example', '% comment', '\\%', '\\\\%', '\\\\\\%', '\r', '\n', '\r\n',
+  '`code%`', '<!--%-->', '~~~', '```', '\u793a\u4f8b', '\u0301', '\ud83d\ude00', '\\text{x}', '$x$'];
+for (let fixture = 0; fixture < 150; fixture++) {
+  const text = Array.from({ length: 12 }, () => fragments[Math.floor(random() * fragments.length)]).join('');
+  for (let offset = 0; offset <= text.length; offset++) {
+    const prefix = text.slice(0, offset);
+    assert.strictEqual(current(prefix), baseline(prefix), 'seeded prefix sanitization parity');
+  }
+}
+let copies = 0;
+const split = String.prototype.split;
+let substrings = 0;
+const substring = String.prototype.substring;
+String.prototype.split = function(separator: any, limit?: number): string[] {
+  if (separator === '') copies++;
+  return split.call(this, separator, limit);
+};
+String.prototype.substring = function(start = 0, end?: number): string {
+  substrings++;
+  return substring.call(this, start, end);
+};
+try {
+  assert.strictEqual(current(plain), plain);
+  assert.strictEqual(current(commented), expectedCommented);
+}
+finally {
+  String.prototype.split = split;
+  String.prototype.substring = substring;
+}
+assert.strictEqual(copies, 0, 'plain and comment-only text should avoid character arrays');
+assert.strictEqual(substrings, 0, 'plain text should skip Markdown fence line scanning');
+console.log('Sanitization/reference parity, explicit masks and plain-text allocation checks passed.');
+
+if (process.argv.includes('--benchmark')) {
+ for (const [fixture, text] of [['plain', plain], ['commented', commented]]) {
+  for (const [name, fn] of [['baseline', baseline], ['current', current]] as const) {
+    for (let i = 0; i < 10; i++) fn(text);
+    const samples = [];
+    for (let i = 0; i < 200; i++) {
+      const start = performance.now();
+      fn(text);
+      samples.push(performance.now() - start);
+    }
+    samples.sort((a, b) => a - b);
+    console.log(JSON.stringify({ name, fixture, chars: text.length, samples: samples.length,
+      medianMs: samples[100], p95Ms: samples[189] }));
+  }
+ }
+}

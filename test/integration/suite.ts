@@ -1,0 +1,584 @@
+import * as assert from 'assert';
+import * as vscode from 'vscode';
+
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+async function until(check: () => boolean, description: string, timeout = 8000) {
+  const end = Date.now() + timeout;
+  while (!check()) {
+    if (Date.now() > end) throw new Error('Timed out: ' + description);
+    await delay(20);
+  }
+}
+async function openMarked(source: string) {
+  const cursor = source.indexOf('|');
+  assert.ok(cursor >= 0);
+  const document = await vscode.workspace.openTextDocument({
+    language: 'latex', content: source.slice(0, cursor) + source.slice(cursor + 1),
+  });
+  const editor = await vscode.window.showTextDocument(document);
+  const position = document.positionAt(cursor);
+  editor.selection = new vscode.Selection(position, position);
+  return editor;
+}
+async function type(text: string) {
+  for (const char of text) await vscode.commands.executeCommand('type', { text: char });
+}
+async function configure(enabled: boolean) {
+  await vscode.workspace.getConfiguration('hsnips').update('autoAlign.enabled', enabled, vscode.ConfigurationTarget.Global);
+}
+async function closeAll() {
+  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+}
+export async function run() {
+  const extension = vscode.extensions.getExtension('pasiooooo.vscode-hypersnips');
+  assert.ok(extension, 'development extension is installed');
+  await extension!.activate();
+  await configure(false);
+  const failures: string[] = [];
+  async function test(name: string, fn: () => Promise<void>) {
+    try { await fn(); console.log('PASS ' + name); }
+    catch (error) { failures.push(name + ': ' + String(error)); console.error(error); }
+    finally { await configure(false); await closeAll(); }
+  }
+  await test('dynamic snippet follows placeholder edits', async () => {
+    const editor = await openMarked('dd|');
+    // Let queued visibility events finish before starting a snippet session.
+    await delay(200);
+    const result = await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', editor.document.uri, editor.selection.active);
+    const item = result?.items.find(item => item.detail === 'Dynamic fixture');
+    assert.ok(item?.command?.arguments?.[0], 'dynamic completion is available');
+    await vscode.commands.executeCommand(item!.command!.command, ...item!.command!.arguments!);
+    await until(() => editor.document.getText() === ' = SEED', 'dynamic expansion');
+    await type('word');
+    await until(() => editor.document.getText() === 'word = WORD', 'dynamic placeholder update');
+    await vscode.commands.executeCommand('hsnips.leaveSnippet');
+  });
+  await test('smart Tab and Enter, caret and undo/redo', async () => {
+    const editor = await openMarked('\\begin{align}\n  a|\n\\end{align}');
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.document.getText().includes(' & '), 'smart Tab edit');
+    assert.strictEqual(editor.document.getText(), '\\begin{align}\n  a & \n\\end{align}');
+    // Text and selection notifications can arrive separately from the editor.
+    await until(() => editor.selection.active.line === 1 && editor.selection.active.character === 6, 'smart Tab caret update');
+    assert.strictEqual(editor.selection.active.character, 6);
+    const beforeEnter = editor.document.getText();
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.document.lineCount === 4, 'smart Enter edit');
+    assert.strictEqual(editor.document.getText(), '\\begin{align}\n  a & \\\\\n  \n\\end{align}');
+    const after = editor.document.getText();
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === beforeEnter, 'undo restores pre-Enter text');
+    await vscode.commands.executeCommand('redo');
+    await until(() => editor.document.getText() === after, 'redo restores Enter text');
+    assert.strictEqual(editor.document.getText(), after);
+  });
+  await test('typing environment name updates matching end', async () => {
+    const editor = await openMarked('\\begin{align|}\n  a &= b\n\\end{align}');
+    await type('*');
+    await until(() => editor.document.getText().includes('\\end{align*}'), 'matching environment name');
+    assert.strictEqual(editor.document.getText(), '\\begin{align*}\n  a &= b\n\\end{align*}');
+  });
+  await test('editing a completed row synchronizes other rows and the declaration without Enter', async () => {
+    const editor = await openMarked('\\begin{tabular}{lc}\n  a & b| \\\\\n  c & d \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await type('&');
+    const expected = '\\begin{tabular}{lcl}\n  a & b & \\\\\n  c & d & \\\\\n\\end{tabular}';
+    const compact = (text: string) => text.replace(/[ \t]/g, '');
+    await until(() => compact(editor.document.getText()) === compact(expected), 'live columns and declaration synchronization');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'live column synchronization joins the triggering edit undo');
+  });
+  await test('deleting a trailing empty column shrinks peers and remains undoable', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  a & b & \\\\\n  c & d &| \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await vscode.commands.executeCommand('deleteLeft');
+    const expected = '\\begin{tabular}{ll}\n  a & b \\\\\n  c & d \\\\\n\\end{tabular}';
+    const compact = (value: string) => value.replace(/[ \t]/g, '');
+    await until(() => compact(editor.document.getText()) === compact(expected), 'deleted empty column stays deleted in every row');
+    const after = editor.document.getText();
+    await delay(400);
+    assert.strictEqual(editor.document.getText(), after);
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'one undo restores empty columns');
+    await vscode.commands.executeCommand('redo');
+    await until(() => editor.document.getText() === after, 'redo shrinks empty columns again');
+  });
+  for (const cell of ['\\lstinline!value!', '\\text{unfinished']) {
+    for (const command of ['hsnips.smartEnter', 'type']) {
+      await test('uncertain occupied third column survives deletion and ' + command + ': ' + cell, async () => {
+        const editor = await openMarked(`\\begin{tabular}{lll}\n  a & b &| \\\\\n  c & d & ${cell} \\\\\n\\end{tabular}`);
+        await configure(true);
+        await vscode.commands.executeCommand('deleteLeft');
+        await delay(400);
+        assert.strictEqual(editor.document.lineAt(0).text, '\\begin{tabular}{lll}');
+        assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 3);
+        const end = editor.document.lineAt(1).range.end;
+        editor.selection = new vscode.Selection(end, end);
+        await vscode.commands.executeCommand(command, ...(command === 'type' ? [{ text: '\n' }] : []));
+        await until(() => editor.document.lineCount === 5, 'Enter after the completed row');
+        await delay(400);
+        assert.strictEqual(editor.document.lineAt(0).text, '\\begin{tabular}{lll}');
+        assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 3);
+        assert.ok(editor.document.getText().includes(`c & d & ${cell}`));
+      });
+    }
+  }
+  await test('deleting to one column survives later typing and Enter', async () => {
+    const editor = await openMarked('\\begin{tabular}{ll}\n  a & \\\\\n  b &| \\\\\n\\end{tabular}');
+    await configure(true);
+    await vscode.commands.executeCommand('deleteLeft');
+    await until(() => !editor.document.getText().includes('&'), 'all empty second columns are removed');
+    assert.strictEqual(editor.document.lineAt(0).text, '\\begin{tabular}{l}');
+    const row = editor.document.getText().indexOf('\n  b') + 3;
+    editor.selection = new vscode.Selection(editor.document.positionAt(row + 1), editor.document.positionAt(row + 1));
+    await vscode.commands.executeCommand('type', { text: 'x' });
+    await until(() => editor.document.getText().includes('bx'), 'typing after deletion');
+    await delay(400);
+    assert.ok(!editor.document.getText().includes('&'));
+    const end = editor.document.lineAt(editor.selection.active.line).range.end;
+    editor.selection = new vscode.Selection(end, end);
+    const version = editor.document.version;
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.document.version > version, 'Enter after a completed one-column row');
+    await delay(400);
+    assert.ok(!editor.document.getText().includes('&'), 'the declaration does not restore deleted empty columns');
+  });
+  await test('an empty completed one-column peer also prevents declaration-based refill', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  \\\\\n  b|\n\\end{tabular}');
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.document.getText().includes('b \\\\'), 'the current one-column row is completed');
+    await delay(400);
+    assert.ok(!editor.document.getText().includes('&'), 'empty completed peers establish the same one-column width');
+  });
+  await test('column synchronization preserves a TeX control-space and uses a valid edit batch', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  X| & Y & Z \\\\\n  a\\  \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await type('Q');
+    await until(() => editor.document.lineAt(2).text.includes('a\\ &') &&
+      (editor.document.lineAt(2).text.match(/&/g) || []).length === 2, 'control-space row accepts combined edits');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'control-space synchronization undo');
+  });
+  await test('Tab and Enter inside a multiline cell formula do not insert table syntax', async () => {
+    const editor = await openMarked('\\begin{tabular}{ll}\n  A & B \\\\\n  \\[\n    x|\n  \\]\n  & y \\\\\n\\end{tabular}');
+    await configure(true);
+    const before = editor.document.getText();
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.document.getText() !== before, 'normal formula indentation');
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.document.lineCount === 8, 'normal newline inside formula');
+    await delay(400);
+    assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 2, 'formula editing does not add table separators');
+    assert.strictEqual((editor.document.getText().match(/\\\\/g) || []).length, 2, 'formula Enter does not add a table row break');
+    assert.strictEqual(editor.document.lineAt(1).text, '  A & B \\\\');
+  });
+  await test('adding a column to a multiline row updates its peers without changing the formula', async () => {
+    const editor = await openMarked('\\begin{tabular}{@{}ll@{}}\n  A & B \\\\\n  \\[\n    \\frac{1}{2}\n  \\]\n  & value| \\\\\n\\end{tabular}');
+    await configure(true);
+    await type('&');
+    await until(() => editor.document.lineAt(0).text === '\\begin{tabular}{@{}lll@{}}' &&
+      editor.document.lineAt(1).text === '  A & B & \\\\', 'multiline row grows peer and declaration');
+    assert.strictEqual(editor.document.getText().split('\n').slice(2, 5).join('\n'), '  \\[\n    \\frac{1}{2}\n  \\]');
+    assert.strictEqual(editor.document.lineAt(5).text, '  & value& \\\\');
+  });
+  await test('multiline cell formatting stays reverted while preserving typing and undo', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  Item & Value & Note \\\\\n  A| & \\(\n    \\frac{a+b}{c}\n  \\) & Demo \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await type('x');
+    const expected = before.replace('\n  A &', '\n  Ax &');
+    await until(() => editor.document.getText() === expected, 'keep handwritten multiline layout');
+    await until(() => editor.selection.active.line === 2 && editor.selection.active.character === 4, 'multiline edit caret');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'typing and multiline alignment undo together');
+    await vscode.commands.executeCommand('redo');
+    await until(() => editor.document.getText() === expected, 'multiline alignment redo');
+  });
+  await test('all multiline cells retain source order and separator line breaks', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  \\(\n    a+b\n  \\)\n  & \\(\n    c+d\n  \\)\n  & \\(\n    e|+f\n  \\) \\\\\n\\end{tabular}');
+    editor.selection = new vscode.Selection(editor.selection.active.translate(0, -1), editor.selection.active);
+    await configure(true);
+    await type('g');
+    const expected = '\\begin{tabular}{lll}\n  \\(\n    a+b\n  \\)\n  & \\(\n    c+d\n  \\)\n  & \\(\n    g+f\n  \\) \\\\\n\\end{tabular}';
+    await until(() => editor.document.getText() === expected, 'all multiline cells retain handwritten indentation');
+    await delay(400);
+    assert.strictEqual(editor.document.getText(), expected);
+    assert.strictEqual(editor.selection.active.character, 5);
+  });
+  await test('an unfinished first row can remove its last empty column format', async () => {
+    const editor = await openMarked('\\begin{tabular}{@{}ll@{}}\n  a &|\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await vscode.commands.executeCommand('deleteLeft');
+    await until(() => editor.document.lineAt(0).text === '\\begin{tabular}{@{}l@{}}', 'unfinished row column format shrinks');
+    assert.ok(!editor.document.getText().includes('&'));
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'undo restores separator and column specification together');
+  });
+  for (const command of ['hsnips.smartEnter', 'type']) {
+    await test('column deletion survives immediate typing and ' + command, async () => {
+      const editor = await openMarked('\\begin{tabular}{ll}\n  a &|\n\\end{tabular}');
+      await configure(true);
+      await vscode.commands.executeCommand('deleteLeft');
+      await type('x');
+      await vscode.commands.executeCommand(command, ...(command === 'type' ? [{ text: '\n' }] : []));
+      await until(() => editor.document.lineAt(0).text === '\\begin{tabular}{l}' && editor.document.lineCount === 4,
+        'rapid deletion, typing and Enter keep a single column');
+      await delay(400);
+      assert.ok(!editor.document.getText().includes('&'));
+      assert.strictEqual(editor.document.lineAt(0).text, '\\begin{tabular}{l}');
+    });
+  }
+  await test('dcases aligns its single row without Enter', async () => {
+    const editor = await openMarked('\\begin{dcases}\n  x|&y \\\\\n\\end{dcases}');
+    await configure(true);
+    await type('q');
+    await until(() => editor.document.lineAt(1).text === '  xq & y \\\\', 'single-row dcases spacing');
+    assert.strictEqual(editor.document.lineCount, 3);
+  });
+  await test('dcases aligns while typing inside text commands', async () => {
+    const editor = await openMarked('\\begin{dcases}\n  x & \\text{if foo|} \\\\\n  longer & \\text{otherwise} \\\\\n\\end{dcases}');
+    await configure(true);
+    await type('x');
+    await until(() => editor.document.lineAt(1).text.startsWith('  x      & \\text{if foox}'), 'text command edits trigger alignment');
+    await until(() => editor.document.lineAt(1).text.slice(0, editor.selection.active.character).endsWith('foox'), 'caret stays inside the condition');
+    assert.strictEqual(editor.document.lineCount, 4);
+  });
+  for (const [name, args] of [['dcases', ''], ['drcases*', ''], ['pmatrix*', '[r]'], ['psmallmatrix*', '[l]'], ['alignat', '{2}']]) {
+    await test(name + ' supports alignment, Tab and automatic math snippets', async () => {
+      const editor = await openMarked(`\\begin{${name}}${args}\n  a|&b \\\\\n  longer&c \\\\\n\\end{${name}}`);
+      await configure(true);
+      await type('x');
+      await until(() => editor.document.lineAt(1).text === '  ax     & b \\\\', 'variant auto alignment');
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      await until(() => editor.selection.active.character === 11, 'variant Tab navigation');
+      await type('mm');
+      try { await until(() => editor.document.getText().includes('MATHb'), 'variant math snippet context'); }
+      catch (error) {
+        console.error('Variant typing evidence: ' + JSON.stringify({ name, text: editor.document.getText(), selection: editor.selection }));
+        throw error;
+      }
+    });
+  }
+  await test('dcases first Enter seeds its two intrinsic columns', async () => {
+    const editor = await openMarked('\\begin{dcases}\n  a|\n\\end{dcases}');
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.document.lineAt(1).text === '  a & \\\\', 'dcases column completion');
+    assert.strictEqual(editor.document.lineCount, 4);
+  });
+  await test('a multiline row can be written across Enter presses before its explicit row ending', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  A & B & C \\\\\n  \\[\n    x\n  \\]|\n\\end{tabular}');
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.selection.active.line === 5, 'continue after display formula');
+    await type('&');
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.selection.active.line === 6, 'continue after a standalone separator');
+    await type('2');
+    await delay(400);
+    assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 3, 'unfinished cells are not filled early');
+    assert.strictEqual((editor.document.getText().match(/\\\\/g) || []).length, 1, 'continuation Enter does not finish the table row');
+    await type(' \\\\');
+    await until(() => (editor.document.getText().match(/&/g) || []).length === 4, 'finishing the logical row fills its remaining cell');
+  });
+  await test('Tab finds an existing separator on the next physical line', async () => {
+    const editor = await openMarked('\\begin{matrix}\n  a|\n  & b \\\\\n\\end{matrix}');
+    const before = editor.document.getText();
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.selection.active.line === 2 && editor.selection.active.character === 4, 'next logical column caret');
+    assert.strictEqual(editor.document.getText(), before);
+  });
+  await test('Tab on an empty first cell navigates without widening the header', async () => {
+    const editor = await openMarked('\\begin{tabular}{@{}ll@{}}\n  \\toprule\n  key & value \\\\\n  \\midrule\n      |&       \\\\\n  \\bottomrule\n\\end{tabular}');
+    await configure(true);
+    const before = editor.document.getText();
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.selection.active.line === 4 && editor.selection.active.character === 8, 'empty-cell Tab caret');
+    await delay(400);
+    assert.strictEqual(editor.document.getText(), before, 'navigation must not insert a Tab or change padding');
+  });
+  await test('Tab visits existing separators before inserting a new column', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  al|pha & beta & gamma \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    for (const column of [10, 17]) {
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      await until(() => editor.selection.active.character === column, 'next cell caret');
+      assert.strictEqual(editor.document.getText(), before, 'existing separator navigation leaves content intact');
+    }
+  });
+  for (const literal of ['\\lstinline!x&y!', '\\mintinline{tex}!x&y!', '\\Verb!x&y!']) {
+    await test('Tab skips code separators and falls back inside ' + literal, async () => {
+      const editor = await openMarked(`\\begin{tabular}{lll}\n  A & |${literal} & z \\\\\n\\end{tabular}`);
+      const before = editor.document.getText();
+      const nextCell = before.indexOf('& z') + 2;
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      await until(() => editor.document.offsetAt(editor.selection.active) === nextCell, 'Tab reaches the real separator after code');
+      assert.strictEqual(editor.document.getText(), before);
+      const inside = editor.document.positionAt(before.indexOf('x&y') + 1);
+      editor.selection = new vscode.Selection(inside, inside);
+      const version = editor.document.version;
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      await until(() => editor.document.version > version, 'normal Tab inside code');
+      assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 3, 'code Tab does not insert a table separator');
+      assert.ok(editor.document.getText().includes('&y'), 'the code ampersand and its following character stay intact');
+      await vscode.commands.executeCommand('undo');
+      await until(() => editor.document.getText() === before, 'one undo removes normal Tab from code');
+    });
+  }
+  await test('complex literal options preserve code during Tab fallback', async () => {
+    const literal = '\\lstinline[escapeinside={a}{b}]!x&y!';
+    const editor = await openMarked(`\\begin{tabular}{lll}\n  A & |${literal} & z \\\\\n\\end{tabular}`);
+    const version = editor.document.version;
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.document.version > version, 'complex-header normal Tab');
+    assert.ok(editor.document.getText().includes(literal));
+    assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 3);
+  });
+  await test('Tab skips nested braced Verb content', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  A & |\\Verb{x{y{z}&q}r} & s \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    const nextCell = before.indexOf('& s') + 2;
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.document.offsetAt(editor.selection.active) === nextCell, 'Tab skips nested code braces and separators');
+    assert.strictEqual(editor.document.getText(), before);
+  });
+  for (const afterBreak of [false, true]) {
+    await test('Tab inserts before an existing row break from ' + (afterBreak ? 'after' : 'before') + ' it', async () => {
+      const editor = await openMarked('\\begin{tabular}{ll}\n  alpha' + (afterBreak ? ' \\\\|' : '| \\\\') + '\n\\end{tabular}');
+      await configure(true);
+      const before = editor.document.getText();
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      const after = '\\begin{tabular}{ll}\n  alpha & \\\\\n\\end{tabular}';
+      await until(() => editor.document.getText() === after && editor.selection.active.character === 10, 'new cell before row break');
+      await delay(400);
+      assert.strictEqual(editor.document.getText(), after);
+      await vscode.commands.executeCommand('undo');
+      await until(() => editor.document.getText() === before, 'one undo restores pre-Tab row');
+    });
+  }
+  await test('Tab supports mixed multi-cursor navigation and insertion', async () => {
+    const editor = await openMarked('\\begin{matrix}\na|x \\\\\nb & c \\\\\n\\end{matrix}');
+    editor.selections = [new vscode.Selection(1, 1, 1, 1), new vscode.Selection(2, 1, 2, 1)];
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.document.lineAt(1).text === 'a & x \\\\' && editor.selections.every(s => s.active.character === 4), 'mixed Tab plans and shifted offsets');
+    assert.strictEqual(editor.document.getText(), '\\begin{matrix}\na & x \\\\\nb & c \\\\\n\\end{matrix}');
+    await type('z');
+    await until(() => editor.document.lineAt(1).text === 'a & zx \\\\' && editor.document.lineAt(2).text === 'b & zc \\\\', 'typing at both planned carets');
+  });
+  await test('empty-row Tab and delayed alignment share one undo step', async () => {
+    const editor = await openMarked('\\begin{tabular}{ll}\n  key & value \\\\\n  |\\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    const after = '\\begin{tabular}{ll}\n  key & value \\\\\n      &       \\\\\n\\end{tabular}';
+    await until(() => editor.document.getText() === after && editor.selection.active.character === 8, 'aligned empty row and caret');
+    await configure(false);
+    await type('q');
+    await until(() => editor.document.lineAt(2).text.startsWith('      & q'), 'typing in the newly inserted cell');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === after, 'typing after Tab has a separate undo step');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'one undo removes Tab and delayed alignment');
+    await vscode.commands.executeCommand('redo');
+    await until(() => editor.document.getText() === after, 'redo restores Tab and delayed alignment together');
+  });
+  await test('first-column indentation normalizes while keeping content and caret', async () => {
+    const editor = await openMarked('\\begin{tabular}{ll}\n  key & value \\\\\n  \t x| & y \\\\\n\\end{tabular}');
+    await configure(true);
+    await type('z');
+    await until(() => editor.document.lineAt(2).text.startsWith('  xz '), 'common first-column indentation');
+    await until(() => editor.selection.active.line === 2 && editor.selection.active.character === 4, 'caret follows the first-cell content');
+    assert.ok(editor.document.lineAt(1).text.startsWith('  key & '), 'header padding is not inflated');
+    await configure(false);
+    await type('q');
+    await until(() => editor.document.lineAt(2).text.startsWith('  xzq '), 'typing continues next to its content');
+  });
+  for (const [command, eol] of [['hsnips.smartEnter', '\n'], ['type', '\n'], ['hsnips.smartEnter', '\r\n'], ['type', '\r\n']]) {
+    await test(command + (eol === '\r\n' ? ' CRLF' : ' LF') + ' completes columns, grows declaration and preserves undo', async () => {
+      const editor = await openMarked('\\begin{tabular}{lc}\n  a & b & c \\\\\n  d|\n\\end{tabular}'.replace(/\n/g, eol));
+      const before = editor.document.getText();
+      await configure(true);
+      await vscode.commands.executeCommand(command, ...(command === 'type' ? [{ text: '\n' }] : []));
+      const expected = '\\begin{tabular}{lcl}\n  a & b & c \\\\\n  d & & \\\\\n  \n\\end{tabular}'.replace(/\n/g, eol);
+      const withoutPadding = (text: string) => text.replace(/[ \t]/g, '');
+      await until(() => withoutPadding(editor.document.getText()) === withoutPadding(expected), 'row and declaration completion');
+      await delay(400);
+      await configure(false);
+      assert.equal(editor.selection.active.line, 3);
+      assert.equal(editor.selection.active.character, 2);
+      const after = editor.document.getText();
+      await type('next');
+      try {
+        await until(() => editor.document.lineAt(3).text.trim() === 'next', 'typing on the new row');
+      } catch (error) {
+        console.error('Enter typing evidence: ' + JSON.stringify({ command, eol, after, actual: editor.document.getText(),
+          selection: editor.selection, version: editor.document.version }));
+        throw error;
+      }
+      await vscode.commands.executeCommand('undo');
+      await until(() => editor.document.getText() === after, 'later typing has its own undo boundary');
+      await vscode.commands.executeCommand('undo');
+      try {
+        await until(() => editor.document.getText() === before, 'one undo restores cells, declaration and newline');
+      } catch (error) {
+        console.error('Enter undo evidence: ' + JSON.stringify({ command, eol, before, after, actual: editor.document.getText() }));
+        throw error;
+      }
+      await vscode.commands.executeCommand('redo');
+      await until(() => editor.document.getText() === after, 'one redo restores the complete Enter edit');
+    });
+  }
+  await test('disabled auto alignment preserves Enter without column completion', async () => {
+    const editor = await openMarked('\\begin{tabular}{lc}\n  a & b & c \\\\\n  d|\n\\end{tabular}');
+    await configure(false);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    const expected = '\\begin{tabular}{lc}\n  a & b & c \\\\\n  d \\\\\n  \n\\end{tabular}';
+    await until(() => editor.document.getText() === expected, 'disabled completion keeps the original declaration and separators');
+  });
+  await test('first newline in a CRLF document preserves the Enter caret', async () => {
+    const editor = await openMarked('\\begin{tabular}{lc}a|');
+    await editor.edit(builder => builder.setEndOfLine(vscode.EndOfLine.CRLF));
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    await until(() => editor.document.getText() === '\\begin{tabular}{lc}a & \\\\\r\n', 'first CRLF Enter completion');
+    assert.equal(editor.selection.active.line, 1);
+    assert.equal(editor.selection.active.character, 0);
+  });
+  await test('undo restoring a newline does not trigger column completion', async () => {
+    const editor = await openMarked('\\begin{tabular}{ccc}\n  a|\n  \n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await editor.edit(builder => builder.delete(new vscode.Range(1, 3, 2, 0)));
+    await vscode.commands.executeCommand('undo');
+    await delay(400);
+    assert.equal(editor.document.getText(), before);
+  });
+  await test('Enter with no whitespace alignment keeps later typing separately undoable', async () => {
+    const editor = await openMarked('\\begin{tabular}{cc}\n  a|\n\\end{tabular}');
+    const before = editor.document.getText();
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.smartEnter');
+    const after = '\\begin{tabular}{cc}\n  a & \\\\\n  \n\\end{tabular}';
+    await until(() => editor.document.getText() === after, 'single-row Enter completion');
+    await delay(400);
+    await type('next');
+    await until(() => editor.document.lineAt(2).text.trim() === 'next', 'typing after a no-op alignment');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === after, 'typing undo leaves the completed Enter');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'second undo restores the original row');
+  });
+  await test('automatic snippet respects math and text contexts', async () => {
+    let editor = await openMarked('|');
+    await type('zz');
+    await until(() => editor.document.getText() === 'EXPANDED', 'automatic expansion');
+    editor = await openMarked('$|$');
+    await type('mm');
+    await until(() => editor.document.getText() === '$MATH$', 'math expansion');
+    editor = await openMarked('|');
+    await type('mm');
+    assert.strictEqual(editor.document.getText(), 'mm');
+    editor = await openMarked('|');
+    await type('tt');
+    await until(() => editor.document.getText() === 'TEXT', 'text expansion');
+  });
+  await test('completion provider and accepted manual snippet', async () => {
+    const editor = await openMarked('man|');
+    const result = await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', editor.document.uri, editor.selection.active);
+    const item = result?.items.find(item => item.detail === 'Manual fixture');
+    assert.ok(item, 'manual snippet must appear in completion results');
+    assert.strictEqual(item!.label, 'manual');
+    assert.ok(item!.command, 'completion must carry its expansion command');
+    assert.ok(item!.range instanceof vscode.Range);
+    await editor.edit(builder => builder.replace(item!.range as vscode.Range, item!.insertText as string));
+    await vscode.commands.executeCommand(item!.command!.command, ...(item!.command!.arguments || []));
+    await until(() => editor.document.getText() === 'MANUAL', 'accepted manual snippet expansion');
+  });
+  await test('multi-cursor Tab and comment protection', async () => {
+    const editor = await openMarked('\\begin{matrix}\na|x\nby\n\\end{matrix}');
+    editor.selections = [new vscode.Selection(1, 1, 1, 1), new vscode.Selection(2, 1, 2, 1)];
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.document.getText().includes(' & '), 'smart Tab edit');
+    assert.strictEqual(editor.document.getText(), '\\begin{matrix}\na & x\nb & y\n\\end{matrix}');
+    const comment = await openMarked('\\begin{align}\n% comment|\n\\end{align}');
+    const version = comment.document.version;
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => comment.document.version > version, 'comment receives normal Tab edit');
+    assert.ok(!comment.document.getText().includes('&'), 'comment must not insert an alignment separator');
+  });
+  await test('distant multi-cursor batch preserves context and undo', async () => {
+    const middle = 'middle row\n'.repeat(200);
+    const source = '\\begin{matrix}\na|x\n' + middle + 'by\n\\end{matrix}';
+    const editor = await openMarked(source);
+    const last = editor.document.lineCount - 2;
+    editor.selections = [new vscode.Selection(1, 1, 1, 1), new vscode.Selection(last, 1, last, 1)];
+    let changes = 0;
+    const listener = vscode.workspace.onDidChangeTextDocument(event => {
+      if (event.document === editor.document) changes = Math.max(changes, event.contentChanges.length);
+    });
+    const before = editor.document.getText();
+    const after = '\\begin{matrix}\na & x\n' + middle + 'b & y\n\\end{matrix}';
+    try {
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      await until(() => editor.document.getText() === after, 'distant Tab batch');
+      assert.strictEqual(changes, 2, 'both positions arrive in the same document-change event');
+      await vscode.commands.executeCommand('undo');
+      await until(() => editor.document.getText() === before, 'distant batch undo');
+      await vscode.commands.executeCommand('redo');
+      await until(() => editor.document.getText() === after, 'distant batch redo');
+      editor.selection = new vscode.Selection(last, 4, last, 4);
+      await type('mm');
+      await until(() => editor.document.lineAt(last).text === 'b & MATHy', 'math context after distant batch');
+    } finally { listener.dispose(); }
+  });
+  await test('auto alignment changes whitespace only and stops when disabled', async () => {
+    const source = '\\begin{matrix}\n a|&b \\\\\n longer&c \\\\\n\\end{matrix}';
+    const editor = await openMarked(source);
+    await configure(true);
+    await type('x');
+    const unformatted = source.replace('|', 'x');
+    await until(() => editor.document.getText() !== unformatted, 'automatic alignment');
+    const formatted = editor.document.getText();
+    assert.strictEqual(formatted.replace(/[ \t]/g, ''), unformatted.replace(/[ \t]/g, ''));
+    assert.strictEqual(editor.document.getText(new vscode.Range(new vscode.Position(1, 0), editor.selection.active)).trim(), 'ax');
+    await configure(false);
+    await editor.edit(builder => builder.insert(new vscode.Position(1, 1), '   '));
+    const disabled = editor.document.getText();
+    await delay(400);
+    assert.strictEqual(editor.document.getText(), disabled);
+  });
+  await test('disabled pending alignment and switched document remain untouched', async () => {
+    const editor = await openMarked('\\begin{matrix}\n a|&b \\\\\n longer&c \\\\\n\\end{matrix}');
+    await configure(true);
+    await type('x');
+    await configure(false);
+    const disabled = editor.document.getText();
+    await delay(400);
+    assert.strictEqual(editor.document.getText(), disabled);
+    await configure(true);
+    await type('y');
+    const pending = editor.document.getText();
+    const other = await openMarked('other|');
+    await delay(700);
+    assert.strictEqual(editor.document.getText(), pending);
+    assert.strictEqual(other.document.getText(), 'other');
+  });
+  await test('open edit close repeated documents', async () => {
+    for (let i = 0; i < 20; i++) {
+      const editor = await openMarked('\\begin{align}\nx|&=y\n\\end{align}');
+      await type('q');
+      assert.ok(editor.document.getText().includes('xq&=y'));
+      await closeAll();
+      await until(() => editor.document.isClosed, 'closed test document released');
+    }
+  });
+  if (failures.length) throw new Error(failures.join('\n'));
+  console.log('All extension-host integration tests passed');
+}
+
+

@@ -694,7 +694,7 @@ function getHtml(
 
     function selectSnippetAtLine(line) {
       const doc = currentDocument();
-      if (!doc) return;
+      if (!doc || freshAnalysis.get(doc.filePath) === false) return;
       const snippet = doc.snippets.find(item => line >= item.startLine && line <= item.endLine);
       if (snippet && snippet.id !== selectedSnippetId) {
         selectedSnippetId = snippet.id;
@@ -705,11 +705,23 @@ function getHtml(
     function markEdited() {
       const doc = currentDocument();
       if (!doc || suppressEditorChange) return;
+      const wasDirty = dirtyFiles.has(doc.filePath);
       doc.content = getEditorContent();
       dirtyFiles.add(doc.filePath);
       freshAnalysis.set(doc.filePath, false);
       scheduleAnalyze(doc.filePath, doc.content, doc.savedHash, doc.mtimeMs);
-      render();
+      deleteButton.disabled = true;
+      saveButton.disabled = saving;
+      if (!wasDirty) {
+        for (const option of fileSelect.options) {
+          if (option.value === doc.filePath) {
+            option.textContent = '* ' + option.textContent;
+            break;
+          }
+        }
+        const title = inspector.querySelector('h2');
+        if (title) title.textContent = doc.fileName + ' *';
+      }
       setStatus('Unsaved changes');
     }
 
@@ -974,7 +986,8 @@ export function registerSnippetManager(
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('hsnips.profiles.activeProfile')) {
-        void refresh();
+        // The extension reloads the registry; the manager only needs the new file view.
+        postState();
       }
     })
   );

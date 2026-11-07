@@ -6,6 +6,8 @@ vscode-hypersnips 是一个面向 VS Code 的 LaTeX 数学公式 snippet 扩展�
 
 当前维护者：`pasiooooo`。扩展 ID：`pasiooooo.vscode-hypersnips`。
 
+版本变化见 [CHANGELOG.md](CHANGELOG.md)。GitHub Release 正文会直接展示对应版本的完整更新说明。
+
 > 安装本 fork 前，请先禁用或卸载此前安装的旧版扩展及原版 HyperSnips，避免重复处理按键和 snippet。改名后仍兼容 `hsnips.*` 命令、设置与已有 `.hsnips` 文件，无需迁移 snippet 目录。
 
 ## 功能特性
@@ -25,6 +27,10 @@ vscode-hypersnips 是一个面向 VS Code 的 LaTeX 数学公式 snippet 扩展�
 - 支持 snippet profiles，可在基础 snippets 之上切换不同写作场景的 snippet 集合。
 - 支持 `${VISUAL}`，可把最近选中的文本带入 snippet。
 - 为 `.hsnips` 文件提供语法高亮。
+
+自动对齐的列数以当前编辑行为基准，并以所有行中最后一个有内容的列为下限；因此可以删除多余的尾部空 `&`，其他行及受支持的列声明会同步缩减。有内容的列不会因另一行少写了 `&` 而消失。剩余列的 `l/c/r` 等样式保留，确需更多列时追加 `l`；第一次建立表格时 Enter 仍可依据列声明补齐。
+
+多行单元格的共享列位置格式化已撤回；保留逻辑行识别、跨源码行的 Tab 跳列和列数同步，外层对齐不重排手写的多行内容。当前边界见[多行单元格处理说明](docs/multiline-alignment-design.md)。
 
 ## 快速开始
 
@@ -177,10 +183,10 @@ a &= b \\
 
 - 当前行为空。
 - 当前行只有 `\begin{...}` 或 `\end{...}`。
-- 当前行已经以 `\\` 结尾。
+- 当前行已经以 `\\` 结尾且无需补齐列。
 - 光标右侧还有非空内容。
 
-在矩阵类环境中，按 Tab 会插入 ` & `，用于快速切换到下一列：
+在矩阵类环境中，按 Tab 会先跳到当前逻辑行中下一个有效 `&` 后一个空格的位置，可以跨越源码换行；没有后续 `&` 时插入 ` & `，用于快速切换到下一列：
 
 ```tex
 \begin{bmatrix}
@@ -189,9 +195,25 @@ c & d
 \end{bmatrix}
 ```
 
-当前支持 Tab 插入 ` & ` 的环境包括 `align`、`align*`、`aligned`、`alignedat`、`matrix`、`pmatrix`、`bmatrix`、`Bmatrix`、`vmatrix`、`Vmatrix`、`smallmatrix`、`cases`、`array`、`tabular`、`tabular*`、`tabularx`、`longtable`。
+分列环境的智能 Tab、Enter 和自动对齐使用同一套环境表，包含以下常见环境与变种：
 
-在这些环境中，Tab 会优先插入 ` & `，不会被 snippet placeholder 跳转抢走；这对矩阵 snippet 展开后光标停在空单元格行的情况也生效。如果当前行不适合插入 ` & `，例如 `\begin{...}` / `\end{...}` 行、已经以 `\\` 结尾的行、注释中或 Markdown 代码块中，则退回默认 Tab/snippet 行为。
+| 环境族 | 支持的名称 |
+| --- | --- |
+| AMS 对齐 | `align`、`align*`、`aligned`、`alignedat`、`alignedat*`（兼容保留）、`alignat`、`alignat*`、`xalignat`、`xalignat*`、`xxalignat`、`flalign`、`flalign*`、`split`、`eqnarray`、`eqnarray*` |
+| 分段函数 | `cases`、`cases*`、`dcases`、`dcases*`、`rcases`、`rcases*`、`drcases`、`drcases*` |
+| 矩阵 | `matrix`、`pmatrix`、`bmatrix`、`Bmatrix`、`vmatrix`、`Vmatrix`，以及各自的星号版本 |
+| 小矩阵 | `smallmatrix`、`psmallmatrix`、`bsmallmatrix`、`Bsmallmatrix`、`vsmallmatrix`、`Vsmallmatrix`，以及各自的星号版本 |
+| 表格 | `array`、`tabular`、`tabular*`、`tabularx`、`longtable` |
+
+`gather`、`gather*`、`gathered`、`lgathered`、`rgathered`、`multline`、`multline*`、`multlined` 支持智能换行；它们不使用 `&` 分列，因此不接管 Tab。用户自定义环境仍可通过前述 context 配置扩展。
+
+星号矩阵的可选 `[l/c/r]` 按 mathtools 默认规则紧接在 `\begin{...}` 后解析；`alignat` 等环境会先读取列对数，避免把参数算进单元格。环境定义参见 [AMS 源码](https://github.com/latex3/latex2e/blob/develop/required/amsmath/amsmath.dtx)与 [mathtools 源码](https://github.com/latex3/mathtools/blob/main/mathtools.dtx)。
+
+在这些环境中，Tab 优先执行列跳转或插列，不会被 snippet placeholder 跳转抢走；空单元格同样适用。例如 `text<光标> & & &` 按 Tab 后变为 `text & <光标> & &`，不会重复增加已有分隔符。转义 `\&`、花括号及嵌套环境中的分隔符不会被当成当前行的下一列。若 `&` 后缺少空格，会补一个空格再定位光标。
+
+已有行尾 `\\`、`\\*`、`\\[间距]` 或 `\tabularnewline` 时仍可插列：从行尾符前后按 Tab，都会在行尾符之前插入，保留行尾符及注释。多光标可同时跳转或插列，非空选区仍替换为 ` & `。在 `\begin{...}` / `\end{...}` 行、注释中或 Markdown 代码块中，则退回默认 Tab/snippet 行为。
+
+单元格中的 `\[...\]`、`\(...\)`、`$...$`、`$$...$$` 或 `equation` 等独立公式内部，Tab 和 Enter 不插入外层表格的 `&` 或 `\\`，而是使用普通缩进、换行或片段占位符行为。若公式内又开启了 `matrix`、`aligned` 等分列环境，智能按键只作用于该内层环境。
 
 这些环境（包括 `hsnips.context.extraAlignmentEnvironments` 添加的环境）还支持源码自动对齐：输入、删除、粘贴或智能 Tab／Enter 后，停顿约 150 ms，会调整当前环境中各行 `&`、行尾 `\\` 和行尾注释 `%` 前的空格。数学环境和表格中的行内公式还会对齐同一列中运算符结构相同的 `+`、`-`、`=`；表格环境保留普通文本中的连字符和等号。例如：
 
@@ -210,13 +232,39 @@ Windows 本地扩展会自动读取当前文件生效的字体、字号、字重
 "hsnips.autoAlign.enabled": false
 ```
 
-设置立即生效，并取消尚未执行的对齐；智能 Tab 插入 ` & ` 和智能 Enter 仍可使用。
+设置立即生效，并取消尚未执行的对齐；智能 Tab 列跳转／插列和智能 Enter 仍可使用。
 
-只修改分隔处的空格，保留缩进、单元格内容和注释文字；`\&`、`\%`、花括号参数内的符号及一元正负号不参与对齐。独立注释行、代码块、verbatim 内容和包含嵌套环境边界的行保持原样，内层环境单独对齐。环境需要有匹配的 `\begin`／`\end`，且数据行独占源码行。自动对齐与触发它的编辑合并撤销，撤销／重做本身不触发对齐。
+单行数据以首列有内容的数据行中最小的缩进为基准，统一左侧缩进；空首列的填充空格不会撑宽其他行。列数按 `\\` 或 `\tabularnewline` 划分的**逻辑行**计算，不按源码换行计算。跨行单元格保留原来的换行、公式和缩进，只参与列数同步，不把公式行或单独的 `&` 行拉成独立表格行。
+
+空格对齐保留单元格内容和注释文字；`\&`、`\%`、花括号参数内的符号及一元正负号不参与对齐。独立注释行、代码块、verbatim 内容和嵌套环境边界保持原样，内层环境单独处理。自动处理需要有匹配的 `\begin`／`\end`。补列、列声明扩展和空格对齐与触发它们的编辑合并撤销，撤销／重做本身不触发自动修改。
+
+自动对齐开启时，输入、删除、粘贴或智能 Tab／Enter 后，会同步同一环境中已结束的有效逻辑行的列数，无需把光标移到行尾再按 Enter。优先采用最宽数据行的列数；没有多列参考行时，使用声明列数。例如第一行增加第三列后：
+
+```tex
+\begin{tabular}{lc}
+  A & B & C \\
+  D \\
+\end{tabular}
+```
+
+会自动补齐其他行的空单元格，并将两列声明扩展成三列；新增列默认左对齐 `l`：
+
+```tex
+\begin{tabular}{lcl}
+  A & B & C \\
+  D & & \\
+\end{tabular}
+```
+
+列声明随实际列数增减，保留剩余列的样式和边界修饰；例如 `|lc|` 扩展为 `|lcl|`，删掉末列空 `&` 后可恢复为 `|lc|`。支持 `p/m/b{宽度}`、`X`、静态 `*{数量}{格式}` 及常见列修饰；静态重复格式也可缩减，例如 `*{3}{l}` → `*{2}{l}`。`\multicolumn{数量}{格式}{内容}` 按占用列数计算，转义 `\&`、注释、花括号、公式和嵌套环境中的分隔符不计入外层行。
+
+缺少的 `&` 统一加在行尾符之前，保留间距参数和尾注释；主动删除尾部空列时，其他行的空列也会移除。正在书写、尚无行尾符的行不抢填空列；但删除真实分隔符后，未结束的首行也能同步缩减列声明。多行逻辑行中的 Enter 只增加源码换行，写出 `\\` 或 `\tabularnewline` 后再补齐。普通单行数据仍保留 Smart Enter 的结束行行为。
+
+无需关闭自动对齐即可删除多余的尾部空列；删掉 `&` 后立即输入或按 Enter，也会保留这次缩列操作。未知自定义列类型、动态列数或尚未闭合的公式／结构会跳过不能可靠确定的补列；缩列不会删除列声明中的注释。关闭 `hsnips.autoAlign.enabled` 会同时关闭列数同步、声明增减和空格对齐。
 
 如果修改或本地编译后按键行为没有变化，先执行 `npm run compile`，然后在 VS Code / Cursor 中运行 `Developer: Reload Window`。按键绑定和 `out/` 编译产物都需要重新加载后才会被当前扩展实例使用。
 
-Enter 逻辑同时带有文档变更兜底：如果其他扩展或编辑器模式先把 Enter 处理成了普通换行，扩展会在换行后立即检查上一行并补上缺失的 `\\`。
+Enter 逻辑同时带有文档变更兜底：如果其他扩展或编辑器模式先把 Enter 处理成了普通换行，扩展会在换行后立即检查上一行并补上缺失的 `\\`；开启自动对齐时，同样执行补列和列格式扩展。
 
 ## 环境转换
 
@@ -298,8 +346,11 @@ npm run compile
 - `npm test`：运行核心 LaTeX 编辑逻辑测试。
 - `npm run check`：依次运行静态检查和测试。
 - `npm run package`：生成 `dist/vscode-hypersnips-<version>.vsix`。
+- `npm run test:integration`：在独立用户数据、扩展、工作区及虚构片段目录中运行真实 VS Code 宿主测试。
+- `npm run package:performance`：从干净工作树生成带提交短哈希的性能试用包。
+- `npm run release:notes -- v<version>`：校验标签版本并生成 `tmp/release-notes.md`，仅供预览，不执行发布。
 
-目录按职责组织：`src/` 为扩展源码，`test/` 为测试和 fixture，`scripts/` 为构建脚本，`images/` 为图标资源。测试放在 `src/` 中也能工作；本项目将它们独立出来，避免进入扩展编译产物。`out/`、`.test-out/` 和 `dist/` 分别存放扩展编译结果、测试编译结果和安装包，均不提交 Git；测试和构建文件不打入 VSIX。
+目录按职责组织：`src/` 为扩展源码，`test/` 为测试和 fixture，`scripts/` 为构建脚本，`images/` 为图标资源。`out/` 存放随插件分发的运行代码，`dist/` 存放正式安装包；测试编译结果、测试会话、下载缓存、日志、临时脚本及中间文件统一放在 `tmp/`，不在项目根目录散落生成过程文件。这些生成目录均不提交 Git，`tmp/`、测试和构建脚本不打入 VSIX。
 
 Snippet Manager 使用 `monaco-editor` 的精简运行时资源。`vsce package` 会先运行 `npm run prepare-monaco`，只复制 Monaco editor core、worker、字体和语言包到 `media/monaco`，避免把整个 `node_modules/monaco-editor` 打进 VSIX。
 
@@ -309,16 +360,37 @@ Snippet Manager 使用 `monaco-editor` 的精简运行时资源。`vsce package`
 npm run package
 ```
 
-## 自动发布
+## Pull Request 与自动发布
 
-推送到 `main` 或提交 Pull Request 时，GitHub Actions 会在 Linux 和 Windows 上检查并运行测试，成功后生成 VSIX artifact。发布新版本时运行：
+开发改动先提交到分支，并将面向使用者的变化写入 [CHANGELOG.md](CHANGELOG.md) 的 `[Unreleased]`。推送到 `main`、`codex/performance-refactor` 或提交以 `main` 为目标的 Pull Request 时，GitHub Actions 会在 Linux 和 Windows 上运行回归及真实 VS Code 宿主测试，成功后生成 VSIX artifact。
+
+性能试用通过后，由维护者创建 `codex/performance-refactor` → `main` 的 Pull Request，检查改动、测试结果及试用反馈，再选择 **Create a merge commit** 合并，以保留分阶段提交。若同步最新 `main` 后产生影响行为的改动，应重新测试并提供试用包。合并 PR 本身不会创建 Release。
+
+准备正式发布时另开版本准备分支。以下以未来的 `0.1.5` 为例，当前试用包仍保持 `0.1.4`：
+
+1. 将 `[Unreleased]` 的本次内容整理为 `## [0.1.5] - YYYY-MM-DD`，填入实际发布日期，顶部继续保留空的 `[Unreleased]`。
+2. 更新版本并预览将来展示的 Release 正文：
 
 ```sh
-npm version patch
-git push origin main --follow-tags
+npm version 0.1.5 --no-git-tag-version
+npm run release:notes -- v0.1.5
+npm run check
+npm run package
 ```
 
-推送 `v<version>` 标签会自动创建 GitHub Release，并上传对应的 VSIX。标签版本必须与 `package.json` 一致，检查或打包失败不会发布。流程使用 GitHub 提供的 `GITHUB_TOKEN`，无需另配发布密钥；不会发布到 VS Code Marketplace。
+3. 将 `package.json`、`package-lock.json` 和 `CHANGELOG.md` 一起提交，经 PR 检查后合入 `main`。版本准备阶段使用 `--no-git-tag-version`，避免在日志尚未完整时提前生成发布标签。
+4. 在干净工作目录同步已经审核的 `main`，再创建新标签并推送：
+
+```sh
+git switch main
+git pull --ff-only origin main
+git tag -a v0.1.5 -m "Release v0.1.5"
+git push origin v0.1.5
+```
+
+标签必须与 `package.json` 的版本一致，且 CHANGELOG 中必须有唯一、带日期、包含更新条目的对应章节。工作流提取该章节到 `tmp/release-notes.md`，通过独立的说明 artifact 传递给发布任务，再用 `gh release create --notes-file` 将标题、分类和条目直接展示在 GitHub Release 正文中。未发布内容和其他版本不会混入正文，验证、测试或打包失败均不会发布。
+
+`CHANGELOG.md` 随 VSIX 分发，生成的说明文件、测试及构建脚本不进入扩展。流程仅由 `v<version>` 标签触发 GitHub Release，使用 GitHub 提供的 `GITHUB_TOKEN`，无需另配发布密钥；不会发布到 VS Code Marketplace。不要重用或移动已有的 `v0.1.4` 标签。
 
 ## 致谢
 

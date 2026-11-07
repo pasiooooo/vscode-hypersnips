@@ -1,0 +1,212 @@
+{
+  "environment": {
+    "date": "2026-10-24T13:29:28.906Z",
+    "node": "v25.8.1",
+    "cpu": "Intel(R) Core(TM) i7-14700KF",
+    "platform": "win32"
+  },
+  "samples": 200,
+  "measurements": [
+    {
+      "name": "typing baseline",
+      "kib": 10,
+      "medianMs": 0.6115,
+      "p95Ms": 0.6752,
+      "maxMs": 0.7853
+    },
+    {
+      "name": "typing incremental",
+      "kib": 10,
+      "medianMs": 0.0213,
+      "p95Ms": 0.0411,
+      "maxMs": 0.1796
+    },
+    {
+      "name": "reuse",
+      "kib": 10,
+      "parsedBlocks": 1,
+      "reusedBlocks": 154
+    },
+    {
+      "name": "typing baseline",
+      "kib": 100,
+      "medianMs": 5.8681,
+      "p95Ms": 6.7923,
+      "maxMs": 9.9823
+    },
+    {
+      "name": "typing incremental",
+      "kib": 100,
+      "medianMs": 0.0656,
+      "p95Ms": 0.0801,
+      "maxMs": 0.8388
+    },
+    {
+      "name": "reuse",
+      "kib": 100,
+      "parsedBlocks": 1,
+      "reusedBlocks": 1434
+    },
+    {
+      "name": "typing baseline",
+      "kib": 500,
+      "medianMs": 29.9109,
+      "p95Ms": 34.7153,
+      "maxMs": 42.6587
+    },
+    {
+      "name": "typing incremental",
+      "kib": 500,
+      "medianMs": 0.3649,
+      "p95Ms": 0.4585,
+      "maxMs": 4.1524
+    },
+    {
+      "name": "reuse",
+      "kib": 500,
+      "parsedBlocks": 1,
+      "reusedBlocks": 7123
+    },
+    {
+      "name": "typing baseline",
+      "kib": 1024,
+      "medianMs": 61.1917,
+      "p95Ms": 72.2574,
+      "maxMs": 90.0615
+    },
+    {
+      "name": "typing incremental",
+      "kib": 1024,
+      "medianMs": 0.957,
+      "p95Ms": 1.7618,
+      "maxMs": 7.2582
+    },
+    {
+      "name": "reuse",
+      "kib": 1024,
+      "parsedBlocks": 1,
+      "reusedBlocks": 14575
+    },
+    {
+      "name": "ordinary position update",
+      "position": "start",
+      "medianMs": 0.796,
+      "p95Ms": 1.0675,
+      "maxMs": 7.6787
+    },
+    {
+      "name": "ordinary position update",
+      "position": "middle",
+      "medianMs": 0.7608,
+      "p95Ms": 1.3846,
+      "maxMs": 7.9288
+    },
+    {
+      "name": "ordinary position update",
+      "position": "end",
+      "medianMs": 0.7389,
+      "p95Ms": 1.3643,
+      "maxMs": 6.7704
+    },
+    {
+      "name": "cold 1 MiB parse",
+      "medianMs": 21.2425,
+      "p95Ms": 22.9269,
+      "maxMs": 27.9392
+    },
+    {
+      "name": "structural fence insertion",
+      "medianMs": 16.874,
+      "p95Ms": 18.4896,
+      "maxMs": 52.1592
+    },
+    {
+      "name": "wide alignment baseline",
+      "medianMs": 120.0338,
+      "p95Ms": 142.2924,
+      "maxMs": 168.0512
+    },
+    {
+      "name": "wide alignment current",
+      "medianMs": 7.4806,
+      "p95Ms": 9.2094,
+      "maxMs": 24.6218
+    },
+    {
+      "name": "operator alignment baseline",
+      "rows": 20,
+      "columns": 32,
+      "medianMs": 11.8254,
+      "p95Ms": 12.5367,
+      "maxMs": 16.9342
+    },
+    {
+      "name": "operator alignment current",
+      "rows": 20,
+      "columns": 32,
+      "medianMs": 1.0832,
+      "p95Ms": 1.8395,
+      "maxMs": 17.6551
+    },
+    {
+      "name": "snippet compile baseline",
+      "count": 1000,
+      "medianMs": 0.6787,
+      "p95Ms": 1.8564,
+      "maxMs": 6.9378
+    },
+    {
+      "name": "snippet compile current",
+      "count": 1000,
+      "medianMs": 0.5962,
+      "p95Ms": 0.7369,
+      "maxMs": 2.8584
+    },
+    {
+      "name": "snippet compile baseline",
+      "count": 10000,
+      "medianMs": 660.1908,
+      "p95Ms": 1126.4653,
+      "maxMs": 1157.152
+    },
+    {
+      "name": "snippet compile current",
+      "count": 10000,
+      "medianMs": 6.1603,
+      "p95Ms": 7.7939,
+      "maxMs": 10.4426
+    }
+  ],
+  "gates": [
+    {
+      "name": "1 MiB typing median >=70% faster",
+      "passed": true,
+      "reductionPercent": 98.4
+    },
+    {
+      "name": "1 MiB typing P95 <=10ms",
+      "passed": true,
+      "p95Ms": 1.7618
+    },
+    {
+      "name": "100x128 alignment >=50% faster",
+      "passed": true,
+      "reductionPercent": 93.8
+    }
+  ],
+  "method": "Synthetic input; 10 warmups, 200 measurements. Same process/runtime. Function timings exclude editor IPC/rendering, 150ms debounce, native font processes and other extensions.",
+  "memory": {
+    "cycles": 100,
+    "warmupCycles": 20,
+    "beforeBytes": 46576984,
+    "afterBytes": 46458704,
+    "batchHeapBytes": [
+      46545664,
+      46461296,
+      46461296,
+      46459544,
+      46458704
+    ],
+    "note": "Synthetic parse/edit/release cycles with references leaving helper scope; post-GC heap trend is not proof of absence of all leaks."
+  }
+}

@@ -33,6 +33,7 @@ export class CompletionInfo {
 }
 
 function matchSuffixPrefix(context: string, trigger: string) {
+  if (trigger.length > context.length) trigger = trigger.substring(0, context.length);
   while (trigger.length) {
     if (context.endsWith(trigger)) return trigger;
     trigger = trigger.substring(0, trigger.length - 1);
@@ -119,7 +120,8 @@ function matchSnippet(
   document: vscode.TextDocument,
   position: vscode.Position,
   snippet: HSnippet,
-  context: CompletionMatchContext
+  context: CompletionMatchContext,
+  includePrefixes = true
 ): SnippetMatch {
   let snippetMatches = false;
   let snippetRange = context.contextRange;
@@ -134,19 +136,19 @@ function matchSnippet(
       snippetMatches = context.context.endsWith(snippet.trigger);
       matchingPrefix = snippetMatches
         ? snippet.trigger
-        : matchSuffixPrefix(context.context, snippet.trigger);
+        : includePrefixes ? matchSuffixPrefix(context.context, snippet.trigger) : null;
     } else if (snippet.wordboundary) {
       snippetMatches = context.wordContext == snippet.trigger;
-      matchingPrefix = snippet.trigger.startsWith(context.wordContext) ? context.wordContext : null;
+      matchingPrefix = (includePrefixes || snippetMatches) && snippet.trigger.startsWith(context.wordContext) ? context.wordContext : null;
     } else if (snippet.beginningofline) {
       snippetMatches = context.context.endsWith(snippet.trigger) && context.isPrecedingContextWhitespace;
       matchingPrefix =
-        snippet.trigger.startsWith(context.context) && context.isPrecedingContextWhitespace
+        (includePrefixes || snippetMatches) && snippet.trigger.startsWith(context.context) && context.isPrecedingContextWhitespace
           ? context.context
           : null;
     } else {
       snippetMatches = context.context == snippet.trigger;
-      matchingPrefix = snippet.trigger.startsWith(context.context) ? context.context : null;
+      matchingPrefix = (includePrefixes || snippetMatches) && snippet.trigger.startsWith(context.context) ? context.context : null;
     }
 
     if (matchingPrefix) {
@@ -194,7 +196,7 @@ export function getAutomaticCompletion(
   for (let snippet of snippets) {
     if (!snippet.automatic) continue;
 
-    let match = matchSnippet(document, position, snippet, context);
+    let match = matchSnippet(document, position, snippet, context, false);
     if (match.snippetMatches) {
       return new CompletionInfo(snippet, match.label, match.range, match.groups);
     }

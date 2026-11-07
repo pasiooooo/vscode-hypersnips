@@ -1,23 +1,60 @@
+import type { LatexDocumentSnapshot } from './latexDocumentState';
 export const ROW_BREAK_ENVIRONMENTS = [
   'align',
   'align*',
   'aligned',
   'alignedat',
   'alignedat*',
+  'alignat',
+  'alignat*',
+  'xalignat',
+  'xalignat*',
+  'xxalignat',
+  'flalign',
+  'flalign*',
+  'eqnarray',
+  'eqnarray*',
   'gather',
   'gather*',
   'gathered',
+  'lgathered',
+  'rgathered',
   'split',
   'multline',
   'multline*',
+  'multlined',
   'matrix',
+  'matrix*',
   'pmatrix',
+  'pmatrix*',
   'bmatrix',
+  'bmatrix*',
   'Bmatrix',
+  'Bmatrix*',
   'vmatrix',
+  'vmatrix*',
   'Vmatrix',
+  'Vmatrix*',
   'smallmatrix',
+  'smallmatrix*',
+  'psmallmatrix',
+  'psmallmatrix*',
+  'bsmallmatrix',
+  'bsmallmatrix*',
+  'Bsmallmatrix',
+  'Bsmallmatrix*',
+  'vsmallmatrix',
+  'vsmallmatrix*',
+  'Vsmallmatrix',
+  'Vsmallmatrix*',
   'cases',
+  'cases*',
+  'dcases',
+  'dcases*',
+  'rcases',
+  'rcases*',
+  'drcases',
+  'drcases*',
   'array',
   'tabular',
   'tabular*',
@@ -31,14 +68,48 @@ export const ALIGNMENT_SEPARATOR_ENVIRONMENTS = [
   'aligned',
   'alignedat',
   'alignedat*',
+  'alignat',
+  'alignat*',
+  'xalignat',
+  'xalignat*',
+  'xxalignat',
+  'flalign',
+  'flalign*',
+  'eqnarray',
+  'eqnarray*',
+  'split',
   'matrix',
+  'matrix*',
   'pmatrix',
+  'pmatrix*',
   'bmatrix',
+  'bmatrix*',
   'Bmatrix',
+  'Bmatrix*',
   'vmatrix',
+  'vmatrix*',
   'Vmatrix',
+  'Vmatrix*',
   'smallmatrix',
+  'smallmatrix*',
+  'psmallmatrix',
+  'psmallmatrix*',
+  'bsmallmatrix',
+  'bsmallmatrix*',
+  'Bsmallmatrix',
+  'Bsmallmatrix*',
+  'vsmallmatrix',
+  'vsmallmatrix*',
+  'Vsmallmatrix',
+  'Vsmallmatrix*',
   'cases',
+  'cases*',
+  'dcases',
+  'dcases*',
+  'rcases',
+  'rcases*',
+  'drcases',
+  'drcases*',
   'array',
   'tabular',
   'tabular*',
@@ -201,6 +272,7 @@ function maskRange(chars: string[], start: number, end: number) {
 
 function getMarkdownFenceRanges(text: string) {
   let ranges: SourceRange[] = [];
+  if (!text.includes('```') && !text.includes('~~~')) return ranges;
   let open: { start: number; marker: string; length: number } | undefined;
   let lineStart = 0;
 
@@ -243,6 +315,14 @@ export function sanitizeLatexForParsing(
   text: string,
   markdownFenceRanges = getMarkdownFenceRanges(text)
 ) {
+  if (!markdownFenceRanges.length && !text.includes('`') && !text.includes('<!--')) {
+    if (!text.includes('%')) return text;
+    return text.replace(/[^\n]+/g, (line) => {
+      const comment = findLatexCommentStart(line);
+      return comment == -1 ? line : line.slice(0, comment) +
+        line.slice(comment).replace(/[^\r]/g, ' ');
+    });
+  }
   let chars = text.split('');
 
   for (let range of markdownFenceRanges) {
@@ -382,7 +462,7 @@ function isInsideMarkdownCodeInPrefix(beforeCursor: string, markdownFenceRanges:
   return inlineBackticks ? inlineBackticks.length % 2 == 1 : false;
 }
 
-function findMatchingBrace(text: string, openBrace: number, limit: number) {
+export function findMatchingBrace(text: string, openBrace: number, limit: number) {
   let depth = 0;
   for (let index = openBrace; index < limit; index++) {
     if (isEscaped(text, index)) {
@@ -496,8 +576,10 @@ function getMathDelimiterStackFromSanitized(beforeCursor: string) {
 export function getLatexContext(
   text: string,
   offset: number,
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
 ): LatexEditorContext {
+  if (snapshot) return snapshot.contextAt(offset);
   let resolved = resolveLatexContextOptions(options);
   let parsedPrefix = createLatexParsingPrefix(text, offset);
   let environmentFrames = getOpenLatexEnvironmentFramesFromSanitized(
@@ -519,9 +601,10 @@ export function getLatexContext(
   let mathEnvironments = new Set(resolved.mathEnvironments);
   let inVerbatimLikeEnvironment = isInAnyEnvironment(environmentStack, verbatimEnvironments);
   let delimiterStack = getMathDelimiterStackFromSanitized(parsedPrefix.sanitized);
-  let delimiterMathKind = delimiterStack[delimiterStack.length - 1]?.kind;
-  let inRowBreakEnvironment = isInAnyEnvironment(environmentStack, rowBreakEnvironments);
-  let inAlignmentEnvironment = isInAnyEnvironment(environmentStack, alignmentEnvironments);
+  let delimiterFrame = delimiterStack[delimiterStack.length - 1];
+  let delimiterMathKind = delimiterFrame?.kind;
+  const editingEnvironment = currentEnvironmentFrame &&
+    (!delimiterFrame || delimiterFrame.start < currentEnvironmentFrame.beginEnd);
   let inMathEnvironment = isInAnyEnvironment(environmentStack, mathEnvironments);
   let blocked = inComment || inMarkdownCode || inTextLikeCommand || inVerbatimLikeEnvironment;
   let inMath = (Boolean(delimiterMathKind) || inMathEnvironment) && !blocked;
@@ -542,9 +625,9 @@ export function getLatexContext(
     inVerbatimLikeEnvironment,
     inMath,
     mathKind,
-    canSmartEnter: inRowBreakEnvironment && !blocked,
-    canSmartTab: inAlignmentEnvironment && !blocked,
-    canInsertAlignmentSeparator: inAlignmentEnvironment && !blocked,
+    canSmartEnter: Boolean(editingEnvironment && rowBreakEnvironments.has(currentEnvironment!)) && !blocked,
+    canSmartTab: Boolean(editingEnvironment && alignmentEnvironments.has(currentEnvironment!)) && !blocked,
+    canInsertAlignmentSeparator: Boolean(editingEnvironment && alignmentEnvironments.has(currentEnvironment!)) && !blocked,
     canExpandMathSnippet: inMath && !blocked,
   };
 }

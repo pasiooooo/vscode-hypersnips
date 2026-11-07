@@ -8,6 +8,7 @@ scripts/**
 src/**
 test/**
 .test-out/**
+tmp/**
 dist/**
 out/test/**
 syntaxes/*.yaml
@@ -15,3 +16,5 @@ tsconfig.json
 tsconfig.test.json
 package-lock.json
 *.vsix
+docs/**
+.vscode-test/**

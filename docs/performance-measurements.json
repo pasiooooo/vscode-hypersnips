@@ -1,0 +1,55 @@
+{
+  "environment": {
+    "coreDate": "2026-10-23T08:20:09.171Z",
+    "node": "v25.8.1",
+    "cpu": "Intel(R) Core(TM) i7-14700KF",
+    "platform": "win32"
+  },
+  "warmups": 10,
+  "samples": 200,
+  "method": "Same-process frozen/current synthetic algorithms; excludes editor IPC/rendering, debounce and native process startup. Core benchmark report writes redirected to stdout without changing measured algorithms.",
+  "measurements": [
+    {"name":"typing baseline","kib":10,"medianMs":0.6167,"p95Ms":0.7146,"maxMs":0.9751},
+    {"name":"typing incremental","kib":10,"medianMs":0.0326,"p95Ms":0.0518,"maxMs":0.295},
+    {"name":"reuse","kib":10,"parsedBlocks":1,"reusedBlocks":154},
+    {"name":"typing baseline","kib":100,"medianMs":5.8509,"p95Ms":6.9001,"maxMs":9.412},
+    {"name":"typing incremental","kib":100,"medianMs":0.0675,"p95Ms":0.1157,"maxMs":0.888},
+    {"name":"reuse","kib":100,"parsedBlocks":1,"reusedBlocks":1434},
+    {"name":"typing baseline","kib":500,"medianMs":62.1854,"p95Ms":83.236,"maxMs":112.0002},
+    {"name":"typing incremental","kib":500,"medianMs":0.6664,"p95Ms":1.2211,"maxMs":6.1077},
+    {"name":"reuse","kib":500,"parsedBlocks":1,"reusedBlocks":7123},
+    {"name":"typing baseline","kib":1024,"medianMs":132.3776,"p95Ms":167.7852,"maxMs":314.4522},
+    {"name":"typing incremental","kib":1024,"medianMs":1.4467,"p95Ms":1.7984,"maxMs":7.5923},
+    {"name":"reuse","kib":1024,"parsedBlocks":1,"reusedBlocks":14575},
+    {"name":"ordinary position update","position":"start","medianMs":1.5709,"p95Ms":2.1818,"maxMs":11.1838},
+    {"name":"ordinary position update","position":"middle","medianMs":1.3368,"p95Ms":1.9526,"maxMs":9.7728},
+    {"name":"ordinary position update","position":"end","medianMs":1.2648,"p95Ms":2.4294,"maxMs":10.5652},
+    {"name":"cold 1 MiB parse","medianMs":126.3343,"p95Ms":204.2661,"maxMs":341.4222},
+    {"name":"structural fence insertion","medianMs":34.3231,"p95Ms":41.3863,"maxMs":125.0608},
+    {"name":"wide alignment baseline","medianMs":225.206,"p95Ms":333.2504,"maxMs":429.6722},
+    {"name":"wide alignment current","medianMs":19.6631,"p95Ms":25.2409,"maxMs":37.4384},
+    {"name":"snippet compile baseline","count":1000,"medianMs":1.3907,"p95Ms":2.7012,"maxMs":4.9447},
+    {"name":"snippet compile current","count":1000,"medianMs":1.2301,"p95Ms":2.2809,"maxMs":3.7128},
+    {"name":"snippet compile baseline","count":10000,"medianMs":116.9546,"p95Ms":957.4995,"maxMs":1011.4092},
+    {"name":"snippet compile current","count":10000,"medianMs":14.0483,"p95Ms":17.8571,"maxMs":21.7507},
+    {"name":"automatic baseline","count":10000,"medianMs":2.1173,"p95Ms":2.2710},
+    {"name":"automatic current","count":10000,"medianMs":0.5716,"p95Ms":0.6393},
+    {"name":"manual baseline","count":10000,"medianMs":2.1331,"p95Ms":2.2127},
+    {"name":"manual current","count":10000,"medianMs":1.1203,"p95Ms":1.2260},
+    {"name":"unmasked sanitization baseline","chars":1140000,"medianMs":22.5156,"p95Ms":48.7162},
+    {"name":"unmasked sanitization current","chars":1140000,"medianMs":1.7036,"p95Ms":2.0438}
+  ],
+  "gates": {
+    "typingMedianAtLeast70PercentFaster": true,
+    "typingP95AtMost10Ms": true,
+    "wideAlignmentAtLeast50PercentFaster": true
+  },
+  "memory": {
+    "cycles": 100,
+    "warmupCycles": 20,
+    "beforeBytes": 46856752,
+    "afterBytes": 46742408,
+    "batchHeapBytes": [46827824,46751608,46752184,46742536,46742408],
+    "note": "Post-GC trend for released synthetic snapshots, not a general leak-freedom proof."
+  }
+}

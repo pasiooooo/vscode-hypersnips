@@ -1,0 +1,176 @@
+{
+  "environment": {
+    "node": "v25.8.1",
+    "platform": "win32"
+  },
+  "samples": 200,
+  "warmups": 10,
+  "method": "Exploratory paired probes, rotating implementation order. Function times exclude editor IPC/rendering and native startup. Core acceptance uses scripts/benchmark.cjs.",
+  "fontCache": {
+    "sourceBefore": "3c17910 (font module identical to dded8c1)",
+    "sourceAfter": "6570e6a",
+    "nativeProcessMocked": true,
+    "measurements": {
+      "wide": {
+        "before": {
+          "samples": 200,
+          "medianMs": 1.4833999999999605,
+          "p95Ms": 1.6902000000000044
+        },
+        "after": {
+          "samples": 200,
+          "medianMs": 0.039099999999962165,
+          "p95Ms": 0.06970000000001164
+        }
+      },
+      "largeBody": {
+        "before": {
+          "samples": 200,
+          "medianMs": 14.308899999999994,
+          "p95Ms": 31.55540000000019
+        },
+        "after": {
+          "samples": 200,
+          "medianMs": 0.3247999999998683,
+          "p95Ms": 0.6174000000000888
+        }
+      }
+    }
+  },
+  "whitespaceRuns": {
+    "sourceBefore": "dded8c1 (alignment module identical to 6570e6a)",
+    "sourceAfter": "d834ecd",
+    "measurements": {
+      "wide": {
+        "current": {
+          "samples": 200,
+          "medianMs": 10.377099999999928,
+          "p95Ms": 21.783900000000358
+        },
+        "candidate": {
+          "samples": 200,
+          "medianMs": 8.196899999999914,
+          "p95Ms": 16.9363000000003
+        }
+      },
+      "longCells": {
+        "current": {
+          "samples": 200,
+          "medianMs": 5.826399999999921,
+          "p95Ms": 9.857100000000173
+        },
+        "candidate": {
+          "samples": 200,
+          "medianMs": 2.527299999999741,
+          "p95Ms": 3.680199999999786
+        }
+      },
+      "ordinary": {
+        "current": {
+          "samples": 200,
+          "medianMs": 0.18510000000060245,
+          "p95Ms": 0.6702000000004773
+        },
+        "candidate": {
+          "samples": 200,
+          "medianMs": 0.14570000000003347,
+          "p95Ms": 0.5343000000002576
+        }
+      }
+    }
+  },
+  "fenceScan": {
+    "sourceBefore": "4a12df8",
+    "sourceAfter": "e7e209b",
+    "measurements": [
+      {
+        "fixture": "plain",
+        "name": "predecessor",
+        "chars": 1140000,
+        "medianMs": 0.5527999999999906,
+        "p95Ms": 0.6297999999999888
+      },
+      {
+        "fixture": "plain",
+        "name": "current",
+        "chars": 1140000,
+        "medianMs": 0.09820000000001983,
+        "p95Ms": 0.10499999999996135
+      },
+      {
+        "fixture": "commented",
+        "name": "predecessor",
+        "chars": 1080000,
+        "medianMs": 17.15059999999994,
+        "p95Ms": 24.86080000000038
+      },
+      {
+        "fixture": "commented",
+        "name": "current",
+        "chars": 1080000,
+        "medianMs": 15.67029999999977,
+        "p95Ms": 24.208599999999933
+      }
+    ]
+  },
+  "operatorPrefix": {
+    "sourceBefore": "d834ecd",
+    "sourceAfter": "ff2fe6a",
+    "rows": 100,
+    "columns": 128,
+    "measurements": {
+      "normalWide": {
+        "current": {
+          "samples": 200,
+          "medianMs": 7.825200000000223,
+          "p95Ms": 16.784400000000005
+        },
+        "candidate": {
+          "samples": 200,
+          "medianMs": 7.977799999999661,
+          "p95Ms": 16.862699999999677
+        }
+      },
+      "binaryOperators": {
+        "current": {
+          "samples": 200,
+          "medianMs": 110.28139999999985,
+          "p95Ms": 175.28960000000006
+        },
+        "candidate": {
+          "samples": 200,
+          "medianMs": 38.44980000000214,
+          "p95Ms": 62.63090000000011
+        }
+      },
+      "nestedText": {
+        "current": {
+          "samples": 200,
+          "medianMs": 125.48040000000037,
+          "p95Ms": 148.49120000000403
+        },
+        "candidate": {
+          "samples": 200,
+          "medianMs": 36.0251999999964,
+          "p95Ms": 44.491299999994226
+        }
+      }
+    }
+  },
+  "blockSanitization": {
+    "sourceBefore": "e7e209b",
+    "sourceAfter": "3c17910",
+    "measurements": {
+      "before": {
+        "samples": 200,
+        "medianMs": 33.85599999999977,
+        "p95Ms": 48.458700000000135
+      },
+      "after": {
+        "samples": 200,
+        "medianMs": 26.59219999999914,
+        "p95Ms": 35.91569999999774
+      }
+    }
+  }
+}

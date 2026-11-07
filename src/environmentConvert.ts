@@ -1,3 +1,4 @@
+import type { LatexDocumentSnapshot } from './latexDocumentState';
 import {
   isEscaped,
   LatexContextOptions,
@@ -129,7 +130,7 @@ function findMatchingBrace(text: string, openBrace: number) {
   return -1;
 }
 
-function parseBracedArguments(text: string, start: number): LatexArgumentRange[] {
+export function parseBracedArguments(text: string, start: number): LatexArgumentRange[] {
   let args: LatexArgumentRange[] = [];
   let index = start;
 
@@ -167,8 +168,10 @@ function getEnvironmentNameRange(match: RegExpExecArray) {
 export function findLatexEnvironmentPairAt(
   text: string,
   offset: number,
-  _options: LatexContextOptions = {}
+  _options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
 ) {
+  if (snapshot) return snapshot.environmentPairAt(offset);
   let sanitized = sanitizeLatexForParsing(text);
   let verbatimEnvironments = new Set(VERBATIM_LIKE_ENVIRONMENTS);
   let stack: BeginToken[] = [];
@@ -234,7 +237,8 @@ export function findLatexEnvironmentPairAt(
     .sort((a, b) => (a.endEnd - a.beginStart) - (b.endEnd - b.beginStart))[0];
 }
 
-export function findDisplayMathDelimiterAt(text: string, offset: number) {
+export function findDisplayMathDelimiterAt(text: string, offset: number, snapshot?: LatexDocumentSnapshot) {
+  if (snapshot) return snapshot.displayDelimiterAt(offset);
   let sanitized = sanitizeLatexForParsing(text);
   let stack: DelimiterToken[] = [];
   let pairs: MathDelimiterPair[] = [];
@@ -350,13 +354,14 @@ function normalizeArgumentsForTarget(
 export function conversionNeedsTableArguments(
   text: string,
   offset: number,
-  targetName: string
+  targetName: string,
+  snapshot?: LatexDocumentSnapshot
 ) {
   if (!isTableLikeEnvironment(targetName)) {
     return false;
   }
 
-  let pair = findLatexEnvironmentPairAt(text, offset);
+  let pair = findLatexEnvironmentPairAt(text, offset, {}, snapshot);
   return !pair || pair.beginArguments.length == 0;
 }
 
@@ -498,15 +503,16 @@ export function createWrapCurrentMathStructurePlan(
   offset: number,
   targetName: string,
   targetArguments = '',
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
 ): ConversionPlan {
-  let environmentPair = findLatexEnvironmentPairAt(text, offset, options);
+  let environmentPair = findLatexEnvironmentPairAt(text, offset, options, snapshot);
   if (environmentPair) {
     let bodyRange = getEnvironmentBodyRange(environmentPair);
     return createWrapBodyPlan(text, bodyRange.start, bodyRange.end, targetName, targetArguments);
   }
 
-  let delimiterPair = findDisplayMathDelimiterAt(text, offset);
+  let delimiterPair = findDisplayMathDelimiterAt(text, offset, snapshot);
   if (delimiterPair) {
     return createWrapBodyPlan(text, delimiterPair.openEnd, delimiterPair.closeStart, targetName, targetArguments);
   }
@@ -546,14 +552,15 @@ export function createUnwrapDelimiterPlan(text: string, pair: MathDelimiterPair)
 export function createUnwrapMathStructurePlan(
   text: string,
   offset: number,
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
 ): ConversionPlan {
-  let environmentPair = findLatexEnvironmentPairAt(text, offset, options);
+  let environmentPair = findLatexEnvironmentPairAt(text, offset, options, snapshot);
   if (environmentPair && WRAPPABLE_MATH_ENVIRONMENTS.indexOf(environmentPair.name) != -1) {
     return createUnwrapEnvironmentPlan(text, environmentPair);
   }
 
-  let delimiterPair = findDisplayMathDelimiterAt(text, offset);
+  let delimiterPair = findDisplayMathDelimiterAt(text, offset, snapshot);
   if (delimiterPair) {
     return createUnwrapDelimiterPlan(text, delimiterPair);
   }
@@ -566,14 +573,15 @@ export function createEnvironmentConversionPlan(
   offset: number,
   targetName: string,
   targetArguments = '',
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
 ): ConversionPlan {
-  let environmentPair = findLatexEnvironmentPairAt(text, offset, options);
+  let environmentPair = findLatexEnvironmentPairAt(text, offset, options, snapshot);
   if (environmentPair) {
     return createEnvironmentRenamePlan(text, environmentPair, targetName, targetArguments);
   }
 
-  let delimiterPair = findDisplayMathDelimiterAt(text, offset);
+  let delimiterPair = findDisplayMathDelimiterAt(text, offset, snapshot);
   if (delimiterPair) {
     return createDelimiterConversionPlan(text, delimiterPair, targetName, targetArguments);
   }
@@ -629,11 +637,13 @@ export function createEnvironmentNameSyncPlan(
   beforeText: string,
   afterText: string,
   change: SingleTextChange,
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
 ): ConversionPlan {
+  if (snapshot && !snapshot.touchesEnvironmentName(change)) return { handled: false, edits: [] };
   let pairsToCheck = [
-    findLatexEnvironmentPairAt(beforeText, change.rangeOffset, options),
-    findLatexEnvironmentPairAt(beforeText, change.rangeOffset + change.rangeLength, options),
+    findLatexEnvironmentPairAt(beforeText, change.rangeOffset, options, snapshot),
+    findLatexEnvironmentPairAt(beforeText, change.rangeOffset + change.rangeLength, options, snapshot),
   ].filter((pair): pair is LatexEnvironmentPair => Boolean(pair));
 
   for (let pair of pairsToCheck) {

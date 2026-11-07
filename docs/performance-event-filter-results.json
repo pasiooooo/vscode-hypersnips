@@ -1,0 +1,444 @@
+{
+  "source": "ac88536",
+  "method": "snippetarrayscreatedinsideeachVMthussamerealmfiltercallback;exactextensionpredicateandfilterexpression thenrealgetAutomaticCompletion;10warmups200rotatingpaired;excludescommongetEditorLatexContext/eventdispatch",
+  "parity": {
+    "fixtures": 1000,
+    "parityCalls": 5000,
+    "regexExecutions": 5408,
+    "excludedManual": 11832
+  },
+  "measurements": {
+    "1000_10_math_miss": {
+      "count": 1000,
+      "automaticPercent": 10,
+      "contextName": "math",
+      "match": false,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 100
+      },
+      "current": {
+        "medianMs": 0.07989999999995234,
+        "p95Ms": 0.09260000000000446
+      },
+      "candidate": {
+        "medianMs": 0.017300000000034288,
+        "p95Ms": 0.022800000000017917
+      }
+    },
+    "1000_10_math_match": {
+      "count": 1000,
+      "automaticPercent": 10,
+      "contextName": "math",
+      "match": true,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 101
+      },
+      "current": {
+        "medianMs": 0.08119999999996708,
+        "p95Ms": 0.09919999999999618
+      },
+      "candidate": {
+        "medianMs": 0.017499999999984084,
+        "p95Ms": 0.021200000000021646
+      }
+    },
+    "1000_10_text_miss": {
+      "count": 1000,
+      "automaticPercent": 10,
+      "contextName": "text",
+      "match": false,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 100
+      },
+      "current": {
+        "medianMs": 0.07859999999999445,
+        "p95Ms": 0.0835999999999899
+      },
+      "candidate": {
+        "medianMs": 0.016400000000032833,
+        "p95Ms": 0.018600000000049022
+      }
+    },
+    "1000_10_text_match": {
+      "count": 1000,
+      "automaticPercent": 10,
+      "contextName": "text",
+      "match": true,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 101
+      },
+      "current": {
+        "medianMs": 0.07940000000002101,
+        "p95Ms": 0.08859999999998536
+      },
+      "candidate": {
+        "medianMs": 0.016899999999964166,
+        "p95Ms": 0.020600000000001728
+      }
+    },
+    "1000_10_undefined_miss": {
+      "count": 1000,
+      "automaticPercent": 10,
+      "contextName": "undefined",
+      "match": false,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 100
+      },
+      "current": {
+        "medianMs": 0.07880000000000109,
+        "p95Ms": 0.08330000000000837
+      },
+      "candidate": {
+        "medianMs": 0.016400000000032833,
+        "p95Ms": 0.017699999999990723
+      }
+    },
+    "1000_10_undefined_match": {
+      "count": 1000,
+      "automaticPercent": 10,
+      "contextName": "undefined",
+      "match": true,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 101
+      },
+      "current": {
+        "medianMs": 0.08020000000004757,
+        "p95Ms": 0.09080000000000155
+      },
+      "candidate": {
+        "medianMs": 0.016799999999989268,
+        "p95Ms": 0.018499999999960437
+      }
+    },
+    "1000_90_math_miss": {
+      "count": 1000,
+      "automaticPercent": 90,
+      "contextName": "math",
+      "match": false,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 900
+      },
+      "current": {
+        "medianMs": 0.102800000000002,
+        "p95Ms": 0.1087999999999738
+      },
+      "candidate": {
+        "medianMs": 0.09769999999997481,
+        "p95Ms": 0.10749999999995907
+      }
+    },
+    "1000_90_math_match": {
+      "count": 1000,
+      "automaticPercent": 90,
+      "contextName": "math",
+      "match": true,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 901
+      },
+      "current": {
+        "medianMs": 0.10400000000004184,
+        "p95Ms": 0.11829999999997654
+      },
+      "candidate": {
+        "medianMs": 0.09939999999994598,
+        "p95Ms": 0.11510000000004084
+      }
+    },
+    "1000_90_text_miss": {
+      "count": 1000,
+      "automaticPercent": 90,
+      "contextName": "text",
+      "match": false,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 900
+      },
+      "current": {
+        "medianMs": 0.10489999999998645,
+        "p95Ms": 0.13069999999993342
+      },
+      "candidate": {
+        "medianMs": 0.10000000000002274,
+        "p95Ms": 0.12380000000007385
+      }
+    },
+    "1000_90_text_match": {
+      "count": 1000,
+      "automaticPercent": 90,
+      "contextName": "text",
+      "match": true,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 901
+      },
+      "current": {
+        "medianMs": 0.102800000000002,
+        "p95Ms": 0.1208000000000311
+      },
+      "candidate": {
+        "medianMs": 0.09789999999998145,
+        "p95Ms": 0.11830000000009022
+      }
+    },
+    "1000_90_undefined_miss": {
+      "count": 1000,
+      "automaticPercent": 90,
+      "contextName": "undefined",
+      "match": false,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 900
+      },
+      "current": {
+        "medianMs": 0.10389999999995325,
+        "p95Ms": 0.11199999999996635
+      },
+      "candidate": {
+        "medianMs": 0.09780000000000655,
+        "p95Ms": 0.10450000000003001
+      }
+    },
+    "1000_90_undefined_match": {
+      "count": 1000,
+      "automaticPercent": 90,
+      "contextName": "undefined",
+      "match": true,
+      "predicateCalls": {
+        "current": 1000,
+        "candidate": 901
+      },
+      "current": {
+        "medianMs": 0.10649999999998272,
+        "p95Ms": 0.12220000000002074
+      },
+      "candidate": {
+        "medianMs": 0.1008000000000493,
+        "p95Ms": 0.1189000000000533
+      }
+    },
+    "10000_10_math_miss": {
+      "count": 10000,
+      "automaticPercent": 10,
+      "contextName": "math",
+      "match": false,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 1000
+      },
+      "current": {
+        "medianMs": 0.7884999999999991,
+        "p95Ms": 0.8569999999999709
+      },
+      "candidate": {
+        "medianMs": 0.16649999999992815,
+        "p95Ms": 0.19240000000002055
+      }
+    },
+    "10000_10_math_match": {
+      "count": 10000,
+      "automaticPercent": 10,
+      "contextName": "math",
+      "match": true,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 1001
+      },
+      "current": {
+        "medianMs": 0.7832999999999402,
+        "p95Ms": 0.8392000000000053
+      },
+      "candidate": {
+        "medianMs": 0.1671000000000049,
+        "p95Ms": 0.20799999999997
+      }
+    },
+    "10000_10_text_miss": {
+      "count": 10000,
+      "automaticPercent": 10,
+      "contextName": "text",
+      "match": false,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 1000
+      },
+      "current": {
+        "medianMs": 0.7786000000000968,
+        "p95Ms": 0.8358999999998105
+      },
+      "candidate": {
+        "medianMs": 0.16259999999988395,
+        "p95Ms": 0.177599999999984
+      }
+    },
+    "10000_10_text_match": {
+      "count": 10000,
+      "automaticPercent": 10,
+      "contextName": "text",
+      "match": true,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 1001
+      },
+      "current": {
+        "medianMs": 0.7783999999999196,
+        "p95Ms": 0.8226999999999407
+      },
+      "candidate": {
+        "medianMs": 0.16290000000003602,
+        "p95Ms": 0.1795999999999367
+      }
+    },
+    "10000_10_undefined_miss": {
+      "count": 10000,
+      "automaticPercent": 10,
+      "contextName": "undefined",
+      "match": false,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 1000
+      },
+      "current": {
+        "medianMs": 0.7901999999999134,
+        "p95Ms": 0.914299999999912
+      },
+      "candidate": {
+        "medianMs": 0.16550000000006548,
+        "p95Ms": 0.19219999999995707
+      }
+    },
+    "10000_10_undefined_match": {
+      "count": 10000,
+      "automaticPercent": 10,
+      "contextName": "undefined",
+      "match": true,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 1001
+      },
+      "current": {
+        "medianMs": 0.7902000000001408,
+        "p95Ms": 0.8385000000000673
+      },
+      "candidate": {
+        "medianMs": 0.16270000000008622,
+        "p95Ms": 0.1792000000000371
+      }
+    },
+    "10000_90_math_miss": {
+      "count": 10000,
+      "automaticPercent": 90,
+      "contextName": "math",
+      "match": false,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 9000
+      },
+      "current": {
+        "medianMs": 1.0277000000000953,
+        "p95Ms": 1.1118000000001302
+      },
+      "candidate": {
+        "medianMs": 0.9670999999998457,
+        "p95Ms": 1.0145000000002256
+      }
+    },
+    "10000_90_math_match": {
+      "count": 10000,
+      "automaticPercent": 90,
+      "contextName": "math",
+      "match": true,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 9001
+      },
+      "current": {
+        "medianMs": 1.0304000000000997,
+        "p95Ms": 1.1264999999998508
+      },
+      "candidate": {
+        "medianMs": 0.9740000000001601,
+        "p95Ms": 1.0429000000003725
+      }
+    },
+    "10000_90_text_miss": {
+      "count": 10000,
+      "automaticPercent": 90,
+      "contextName": "text",
+      "match": false,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 9000
+      },
+      "current": {
+        "medianMs": 1.0308999999997468,
+        "p95Ms": 1.1752999999998792
+      },
+      "candidate": {
+        "medianMs": 0.9710000000000036,
+        "p95Ms": 1.0680999999999585
+      }
+    },
+    "10000_90_text_match": {
+      "count": 10000,
+      "automaticPercent": 90,
+      "contextName": "text",
+      "match": true,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 9001
+      },
+      "current": {
+        "medianMs": 1.0340000000001055,
+        "p95Ms": 1.2711999999996806
+      },
+      "candidate": {
+        "medianMs": 0.9791000000000167,
+        "p95Ms": 1.561699999999746
+      }
+    },
+    "10000_90_undefined_miss": {
+      "count": 10000,
+      "automaticPercent": 90,
+      "contextName": "undefined",
+      "match": false,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 9000
+      },
+      "current": {
+        "medianMs": 1.035099999999602,
+        "p95Ms": 1.152900000000045
+      },
+      "candidate": {
+        "medianMs": 0.9730999999997039,
+        "p95Ms": 1.0691000000001623
+      }
+    },
+    "10000_90_undefined_match": {
+      "count": 10000,
+      "automaticPercent": 90,
+      "contextName": "undefined",
+      "match": true,
+      "predicateCalls": {
+        "current": 10000,
+        "candidate": 9001
+      },
+      "current": {
+        "medianMs": 1.0396999999993568,
+        "p95Ms": 1.141099999999824
+      },
+      "candidate": {
+        "medianMs": 0.9762999999993554,
+        "p95Ms": 1.0552000000006956
+      }
+    }
+  }
+}

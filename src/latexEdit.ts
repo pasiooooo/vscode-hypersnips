@@ -1,7 +1,12 @@
+import type { LatexDocumentSnapshot } from './latexDocumentState';
+import { getAlignmentColumnCompletion, getAlignmentStructure } from './latexColumns';
 import {
   findLatexCommentStart,
+  findMatchingBrace,
   getLatexContext,
   LatexContextOptions,
+  resolveLatexContextOptions,
+  sanitizeLatexForParsing,
 } from './latexContext';
 
 export {
@@ -103,14 +108,21 @@ function shouldAppendMathLineBreak(line: string) {
 export function getSmartEnterPlan(
   text: string,
   offset: number,
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot,
+  completeAlignmentColumns = false,
+  eol?: '\n' | '\r\n',
+  shrinkAlignmentColumns = false
 ): SmartEnterPlan {
-  let context = getLatexContext(text, offset, options);
-  if (!context.canSmartEnter) {
+  let context = getLatexContext(text, offset, options, snapshot);
+  if (!context.canSmartEnter && !(completeAlignmentColumns && context.canSmartTab)) {
     return { handled: false, edits: [] };
   }
 
   let lineBounds = getLineBounds(text, offset);
+  const hasCarriageReturn = text[lineBounds.end] == '\n' && text[lineBounds.end - 1] == '\r';
+  const newline = eol ?? (completeAlignmentColumns && (hasCarriageReturn || text[lineBounds.start - 2] == '\r') ? '\r\n' : '\n');
+  if ((completeAlignmentColumns || eol !== undefined) && hasCarriageReturn) lineBounds.end--;
   let line = text.substring(lineBounds.start, lineBounds.end);
   let column = offset - lineBounds.start;
   let commentStart = findLatexCommentStart(line);
@@ -124,35 +136,59 @@ export function getSmartEnterPlan(
     return { handled: false, edits: [] };
   }
 
-  if (!shouldAppendMathLineBreak(line)) {
-    return { handled: false, edits: [] };
-  }
-
   let indent = getLineIndent(line);
   let formulaEnd = line.substring(0, formulaLimit).replace(/\s+$/, '').length;
+  const existingBreak = line.slice(0, formulaEnd).match(/(?:\\\\|\\tabularnewline)\*?(?:\[[^\]]*\])?$/);
+  const frame = context.currentEnvironmentFrame;
+  let missing = 0;
+  let columnSpecEdit: TextEdit | undefined;
+  if (completeAlignmentColumns && context.canSmartTab && frame &&
+      resolveLatexContextOptions(options).alignmentEnvironments.includes(frame.name)) {
+    const bodyEnd = existingBreak ? line.slice(0, existingBreak.index).trimEnd().length : formulaEnd;
+    if (['\\]', '\\)', '$', '$$'].includes(line.slice(0, formulaLimit).trim())) return { handled: false, edits: [] };
+    const structure = getAlignmentStructure(text, frame, snapshot);
+    const position = lineBounds.start + bodyEnd - frame.beginEnd;
+    const row = structure?.rows.find((row) => row.start <= position && position <= row.end);
+    if (row && (frame.beginEnd + (row.complete ? row.end : row.bodyEnd) > lineBounds.end ||
+        (!existingBreak && row.dataStart !== undefined && frame.beginEnd + row.dataStart < lineBounds.start))) {
+      return { handled: false, edits: [] };
+    }
+    ({ missing, columnSpecEdit } = getAlignmentColumnCompletion(text, lineBounds.start + bodyEnd, frame, snapshot, structure, shrinkAlignmentColumns));
+  }
+  if (completeAlignmentColumns && existingBreak) {
+    if (!missing && !columnSpecEdit) return { handled: false, edits: [] };
+    formulaEnd = line.slice(0, existingBreak.index).trimEnd().length;
+  } else if (!shouldAppendMathLineBreak(line)) {
+    return { handled: false, edits: [] };
+  }
+  const completedBreak = ' &'.repeat(missing) + ' ' +
+    (completeAlignmentColumns && existingBreak ? existingBreak[0] : '\\\\');
+  const declarationEdits = columnSpecEdit ? [columnSpecEdit] : [];
+  const declarationDelta = columnSpecEdit ? columnSpecEdit.text.length - (columnSpecEdit.end - columnSpecEdit.start) : 0;
 
   if (commentStart == -1) {
     let replaceStart = lineBounds.start + formulaEnd;
-    let insertText = ' ' + '\\\\' + '\n' + indent;
+    let insertText = completedBreak + newline + indent;
     return {
       handled: true,
-      edits: [{ start: replaceStart, end: lineBounds.end, text: insertText }],
-      cursorOffset: replaceStart + insertText.length,
+      edits: [...declarationEdits, { start: replaceStart, end: lineBounds.end, text: insertText }],
+      cursorOffset: replaceStart + insertText.length + declarationDelta,
     };
   }
 
   let replaceStart = lineBounds.start + formulaEnd;
   let replaceEnd = lineBounds.start + commentStart;
-  let insertText = ' ' + '\\\\' + ' ';
-  let lineBreakText = '\n' + indent;
+  let insertText = completedBreak + ' ';
+  let lineBreakText = newline + indent;
 
   return {
     handled: true,
     edits: [
+      ...declarationEdits,
       { start: replaceStart, end: replaceEnd, text: insertText },
       { start: lineBounds.end, end: lineBounds.end, text: lineBreakText },
     ],
-    cursorOffset: lineBounds.end + insertText.length - (replaceEnd - replaceStart) + lineBreakText.length,
+    cursorOffset: lineBounds.end + insertText.length - (replaceEnd - replaceStart) + lineBreakText.length + declarationDelta,
   };
 }
 
@@ -160,9 +196,13 @@ export function getSmartEnterRecoveryPlan(
   beforeEnterText: string,
   offsetBeforeEnter: number,
   currentText: string,
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot,
+  completeAlignmentColumns = false,
+  eol?: '\n' | '\r\n',
+  shrinkAlignmentColumns = false
 ): SmartEnterPlan {
-  let desiredPlan = getSmartEnterPlan(beforeEnterText, offsetBeforeEnter, options);
+  let desiredPlan = getSmartEnterPlan(beforeEnterText, offsetBeforeEnter, options, snapshot, completeAlignmentColumns, eol, shrinkAlignmentColumns);
   if (!desiredPlan.handled || typeof desiredPlan.cursorOffset != 'number') {
     return { handled: false, edits: [] };
   }
@@ -183,9 +223,10 @@ export function getSmartEnterRecoveryPlan(
 export function shouldInsertAlignmentSeparator(
   text: string,
   offset: number,
-  options: LatexContextOptions = {}
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
 ) {
-  let context = getLatexContext(text, offset, options);
+  let context = getLatexContext(text, offset, options, snapshot);
   if (!context.canSmartTab) {
     return false;
   }
@@ -200,7 +241,81 @@ export function shouldInsertAlignmentSeparator(
   if (column > formulaLimit) return false;
   if (!formulaPart && line.trim().startsWith('%')) return false;
   if (/^\\(?:begin|end)\s*\{[^}]+\}$/.test(formulaPart)) return false;
-  if (/\\\\(?:\[[^\]]+\])?$/.test(formulaPart)) return false;
 
   return true;
+}
+
+export function getSmartTabPlan(
+  text: string,
+  offset: number,
+  options: LatexContextOptions = {},
+  snapshot?: LatexDocumentSnapshot
+): { edits: TextEdit[]; cursorOffset: number } | undefined {
+  if (!shouldInsertAlignmentSeparator(text, offset, options, snapshot)) return undefined;
+  const bounds = getLineBounds(text, offset);
+  const context = getLatexContext(text, offset, options, snapshot);
+  const sanitized = snapshot?.sanitizedText ?? sanitizeLatexForParsing(text);
+  const tokens = /\\(?:begin|end)\s*\{[^}]+\}|\\[a-zA-Z]+\*?|\\[^\r\n]|\$\$?|[{}\[\]&]/g;
+  tokens.lastIndex = context.currentEnvironmentFrame?.beginEnd ?? bounds.start;
+  let braces = 0, brackets = 0, nested = 0;
+  let rowBreak: number | undefined;
+  let mathEnd: string | undefined;
+  let token: RegExpExecArray | null;
+  while ((token = tokens.exec(sanitized))) {
+    const symbol = token[0];
+    if (mathEnd) {
+      if (symbol === mathEnd) mathEnd = undefined;
+      continue;
+    }
+    if (symbol === '\\[' || symbol === '\\(' || symbol === '$' || symbol === '$$') {
+      mathEnd = symbol === '\\[' ? '\\]' : symbol === '\\(' ? '\\)' : symbol;
+      continue;
+    }
+    if (/^\\begin\b/.test(symbol)) nested++;
+    else if (/^\\end\b/.test(symbol)) {
+      if (!nested) break;
+      nested--;
+    }
+    else if (/^\\(?:verb\*?|Verb\*?|lstinline\*?|mintinline)$/.test(symbol)) {
+      const verb = /^\\verb\*?$/.test(symbol);
+      // shortcut: nested literal options fall back to normal Tab; extend only if their syntax is needed.
+      const header = verb ? '' : (symbol === '\\mintinline' ?
+        /^(?:\[[^\[\]{}\r\n]*\])?\{[^{}\r\n]*\}/ : /^(?:\[[^\[\]{}\r\n]*\])?/).exec(text.slice(tokens.lastIndex))?.[0];
+      if (header === undefined) return undefined;
+      const start = tokens.lastIndex + header.length;
+      const delimiter = text[start];
+      if (!delimiter || /\s/.test(delimiter) || (!verb && '[]}'.includes(delimiter))) return undefined;
+      const end = delimiter === '{' && !verb ?
+        findMatchingBrace(text, start, text.length) : text.indexOf(delimiter, start + 1);
+      if (end < 0 || /[\r\n]/.test(text.slice(start, end))) return undefined;
+      if (offset > token.index && offset <= end) return undefined;
+      tokens.lastIndex = end + 1;
+    } else if (symbol === '{') braces++;
+    else if (symbol === '}') braces--;
+    else if (symbol === '[') brackets++;
+    else if (symbol === ']') brackets--;
+    else if (!nested && !braces && !brackets) {
+      if (symbol === '&' && token.index >= offset) {
+        const after = token.index + 1;
+        const edits = text[after] === ' ' ? [] : [{ start: after,
+          end: after + (text[after] === '\t' ? 1 : 0), text: ' ' }];
+        return { edits, cursorOffset: after + 1 };
+      }
+      if (symbol === '\\\\' || /^\\tabularnewline\*?$/.test(symbol)) {
+        if (token.index < bounds.start) continue;
+        const lineEnd = sanitized.indexOf('\n', tokens.lastIndex);
+        const suffix = /^\*?(?:\[[^\]]*\])?/.exec(sanitized.slice(tokens.lastIndex, lineEnd < 0 ? undefined : lineEnd))![0];
+        const end = tokens.lastIndex + suffix.length;
+        if (offset <= end || !sanitized.slice(end, offset).trim()) {
+          rowBreak = token.index;
+          break;
+        }
+      }
+    }
+  }
+  const indentEnd = bounds.start + text.slice(bounds.start, bounds.end).match(/^[ \t]*/)![0].length;
+  let start = Math.min(offset, rowBreak ?? offset), end = start;
+  while (start > indentEnd && /[ \t]/.test(text[start - 1])) start--;
+  while (end < bounds.end && /[ \t]/.test(text[end])) end++;
+  return { edits: [{ start, end, text: ' & ' }], cursorOffset: start + 3 };
 }

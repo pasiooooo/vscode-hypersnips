@@ -1,10 +1,12 @@
+import { LatexDocumentState } from './latexDocumentState';
 import * as vscode from 'vscode';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import * as path from 'path';
 import { openExplorer } from './openFileExplorer';
 import { HSnippet } from './hsnippet';
 import { HSnippetInstance } from './hsnippetInstance';
-import { getAlignmentEdits, mapAlignmentOffset } from './latexAlignment';
+import { getAutoAlignmentEdits, mapAlignmentOffset } from './latexAlignment';
+import { getAlignmentStructure } from './latexColumns';
 import { getFontCharacterWidths } from './fontMetrics';
 import { parse } from './parser';
 import { getSnippetDir } from './utils';
@@ -13,7 +15,9 @@ import {
     getLatexContext,
     getSmartEnterPlan,
     getSmartEnterRecoveryPlan,
+    getSmartTabPlan,
     shouldInsertAlignmentSeparator,
+    ALIGNMENT_SEPARATOR_ENVIRONMENTS,
     LatexContextOptions,
     TextEdit,
 } from './latexEdit';
@@ -42,29 +46,65 @@ import {
     normalizeProfileName,
 } from './snippetProfiles';
 
-const SNIPPETS_BY_LANGUAGE: Map<string, HSnippet[]> = new Map();
+let SNIPPETS_BY_LANGUAGE: Map<string, HSnippet[]> = new Map();
+let pendingSnippetLoad: { key: string; promise: Promise<void> } | undefined;
+let profileReload: {
+    key: string;
+    promise?: Promise<void>;
+    updating: boolean;
+    observed: boolean;
+} | undefined;
+let snippetLoadSequence = 0;
 const SNIPPET_STACK: HSnippetInstance[] = [];
 
 let insertingSnippet = false;
 let applyingLatexEdit = false;
 let aligningLatex = false;
 let alignmentTimer: ReturnType<typeof setTimeout> | undefined;
-let latexContextCache:
-    | {
-        document: vscode.TextDocument;
-        version: number;
-        offset: number;
-        optionsKey: string;
-        context: ReturnType<typeof getLatexContext>;
-    }
-    | undefined;
+let cursorRequest = 0;
+let columnRemovalSequence = 0;
+let pendingColumnRemovals = new WeakMap<vscode.TextDocument, {
+    version: number; tokens: Map<number, { id: number; offset: number }>;
+}>();
 let latexContextOptionsCache:
     | {
         options: LatexContextOptions;
         key: string;
     }
     | undefined;
-const DOCUMENT_TEXT_CACHE = new WeakMap<vscode.TextDocument, string>();
+let documentStates = new WeakMap<vscode.TextDocument, { current: LatexDocumentState; previous?: LatexDocumentState }>();
+const contextValues = new Map<string, boolean>();
+
+function getDocumentState(document: vscode.TextDocument) {
+    const { options, key } = getLatexContextOptionsState();
+    const cached = documentStates.get(document);
+    if (cached && cached.current.version == document.version && cached.current.optionsKey == key) return cached.current;
+    const current = new LatexDocumentState(document.getText(), document.version, options);
+    const previous = cached?.current.version == document.version - 1 && cached.current.optionsKey == key
+        ? cached.current : undefined;
+    documentStates.set(document, { current, previous });
+    return current;
+}
+
+function updateDocumentState(event: vscode.TextDocumentChangeEvent) {
+    const { options, key } = getLatexContextOptionsState();
+    const cached = documentStates.get(event.document);
+    const previous = cached?.current;
+    if (previous && previous.version == event.document.version && previous.optionsKey == key) return cached!;
+    let current: LatexDocumentState;
+    if (previous && previous.version + 1 == event.document.version && previous.optionsKey == key) {
+        try {
+            current = previous.update(event.contentChanges, event.document.version, options);
+        } catch {
+            current = new LatexDocumentState(event.document.getText(), event.document.version, options);
+        }
+    } else {
+        current = new LatexDocumentState(event.document.getText(), event.document.version, options);
+    }
+    const states = { current, previous: previous?.version == event.document.version - 1 ? previous : undefined };
+    documentStates.set(event.document, states);
+    return states;
+}
 
 function isLatexLikeDocument(document: vscode.TextDocument) {
     return ['latex', 'tex', 'markdown'].includes(document.languageId.toLowerCase());
@@ -110,27 +150,7 @@ function getCachedLatexContext(document: vscode.TextDocument, position: vscode.P
         return undefined;
     }
 
-    let { options, key: optionsKey } = getLatexContextOptionsState();
-    let offset = document.offsetAt(position);
-    if (
-        latexContextCache &&
-        latexContextCache.document == document &&
-        latexContextCache.version == document.version &&
-        latexContextCache.offset == offset &&
-        latexContextCache.optionsKey == optionsKey
-    ) {
-        return latexContextCache.context;
-    }
-
-    let context = getLatexContext(document.getText(), offset, options);
-    latexContextCache = {
-        document,
-        version: document.version,
-        offset,
-        optionsKey,
-        context,
-    };
-    return context;
+    return getDocumentState(document).contextAt(document.offsetAt(position));
 }
 
 function updateMathContext(editor: vscode.TextEditor | undefined) {
@@ -147,17 +167,23 @@ function updateMathContext(editor: vscode.TextEditor | undefined) {
         }
     }
 
-    vscode.commands.executeCommand('setContext', 'hsnips.inLatexMath', inLatexMath);
-    vscode.commands.executeCommand('setContext', 'hsnips.canSmartEnter', canSmartEnter);
-    vscode.commands.executeCommand('setContext', 'hsnips.canSmartTab', canSmartTab);
-    vscode.commands.executeCommand('setContext', 'hsnips.canInsertAlignmentSeparator', canSmartTab);
+    setMathContext('hsnips.inLatexMath', inLatexMath);
+    setMathContext('hsnips.canSmartEnter', canSmartEnter);
+    setMathContext('hsnips.canSmartTab', canSmartTab);
+    setMathContext('hsnips.canInsertAlignmentSeparator', canSmartTab);
+}
+
+function setMathContext(key: string, value: boolean) {
+    if (contextValues.get(key) == value) return;
+    contextValues.set(key, value);
+    void vscode.commands.executeCommand('setContext', key, value);
 }
 
 async function typeText(text: string) {
     await vscode.commands.executeCommand('type', { text });
 }
 
-async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[]) {
+async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[], undoStopBefore = true, undoStopAfter = true) {
     applyingLatexEdit = true;
     try {
         return await editor.edit((editBuilder) => {
@@ -170,7 +196,7 @@ async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[]) {
                     edit.text
                 );
             }
-        });
+        }, { undoStopBefore, undoStopAfter });
     } finally {
         applyingLatexEdit = false;
     }
@@ -182,12 +208,59 @@ function isAutoAlignEnabled(document: vscode.TextDocument) {
     }).get<boolean>('autoAlign.enabled', true);
 }
 
-function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocumentChangeEvent) {
+function trackColumnRemovals(event: vscode.TextDocumentChangeEvent, previous?: LatexDocumentState) {
+    const pending = pendingColumnRemovals.get(event.document);
+    if (pending?.version == event.document.version) return;
+    if (!pending && (aligningLatex || !event.contentChanges.some((change) =>
+        previous?.text.slice(change.rangeOffset, change.rangeOffset + change.rangeLength).includes('&')))) return;
+    const changes = [...event.contentChanges].sort((a, b) => a.rangeOffset - b.rangeOffset);
+    function mapBegin(offset: number, retainInside = false): number | undefined {
+        let delta = 0;
+        for (const change of changes) {
+            if (change.rangeLength && change.rangeOffset <= offset && offset < change.rangeOffset + change.rangeLength) {
+                return retainInside ? change.rangeOffset + delta + Math.min(offset - change.rangeOffset, change.text.length) : undefined;
+            }
+            if (change.rangeOffset + change.rangeLength <= offset) delta += change.text.length - change.rangeLength;
+        }
+        return offset + delta;
+    }
+    const tokens = new Map<number, { id: number; offset: number }>();
+    if (!event.reason && pending?.version == previous?.version) {
+        for (const [begin, token] of pending?.tokens || []) {
+            const mapped = mapBegin(begin);
+            if (mapped !== undefined) tokens.set(mapped, { id: token.id, offset: mapBegin(token.offset, true)! });
+        }
+    }
+    for (const change of changes) {
+        if (!aligningLatex && previous && previous.text.slice(change.rangeOffset, change.rangeOffset + change.rangeLength).includes('&')) {
+            const pair = previous.environmentPairAt(change.rangeOffset);
+            if (pair && change.rangeOffset >= pair.beginEnd && change.rangeOffset + change.rangeLength <= pair.endStart) {
+                const structure = getAlignmentStructure(previous.text, pair, previous);
+                if (structure?.rows.some((row) => row.valid && row.separators.some((separator) => {
+                    const offset = structure.base + separator.start;
+                    return offset >= change.rangeOffset && offset < change.rangeOffset + change.rangeLength;
+                }))) {
+                    const begin = mapBegin(pair.beginStart);
+                    if (begin !== undefined && !event.reason) tokens.set(begin,
+                        { id: ++columnRemovalSequence, offset: mapBegin(change.rangeOffset, true)! });
+                }
+            }
+        }
+    }
+    if (tokens.size) pendingColumnRemovals.set(event.document, { version: event.document.version, tokens });
+    else pendingColumnRemovals.delete(event.document);
+}
+
+function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocumentChangeEvent, previous?: LatexDocumentState) {
+    if (event.reason || !isLatexLikeDocument(event.document) ||
+        !event.contentChanges.length || !isAutoAlignEnabled(event.document)) {
+        if (alignmentTimer) clearTimeout(alignmentTimer);
+        pendingColumnRemovals.delete(event.document);
+        return;
+    }
+    trackColumnRemovals(event, previous);
     if (aligningLatex) return;
     if (alignmentTimer) clearTimeout(alignmentTimer);
-    if (event.reason || !isLatexLikeDocument(event.document) ||
-        !event.contentChanges.length || !isAutoAlignEnabled(event.document)) return;
-
     let version = event.document.version;
     let offsets: number[] = [];
     let delta = 0;
@@ -204,12 +277,30 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
         alignmentTimer = undefined;
         if (vscode.window.activeTextEditor != editor || editor.document.version != version ||
             !isAutoAlignEnabled(editor.document)) return;
-        let text = editor.document.getText();
+        let snapshot = getDocumentState(editor.document);
+        let text = snapshot.text;
+        const removals = pendingColumnRemovals.get(editor.document)?.tokens || new Map<number, { id: number; offset: number }>();
+        for (const removal of removals.values()) offsets.push(removal.offset);
         let options = getLatexContextOptions();
-        if (!offsets.some((offset) => {
-            let context = getLatexContext(text, offset, options);
-            return context.canSmartTab || (context.inComment && context.environmentStack.length > 0);
-        })) return;
+        let alignmentEnvironments = new Set([
+            ...ALIGNMENT_SEPARATOR_ENVIRONMENTS,
+            ...(options.extraAlignmentEnvironments || []),
+        ]);
+        let environments = new Map<string, { offset: number; beginEnd: number; endStart: number; shrinkIncomplete: boolean }>();
+        for (let offset of offsets) {
+            let context = snapshot.contextAt(offset);
+            if (context.inMarkdownCode || context.inVerbatimLikeEnvironment) continue;
+            if (!context.environmentStack.some((name) => alignmentEnvironments.has(name))) continue;
+            let pair = snapshot.environmentPairAt(offset);
+            if (pair && alignmentEnvironments.has(pair.name)) {
+                const key = `${pair.beginStart}:${pair.endEnd}`;
+                environments.set(key, { offset, beginEnd: pair.beginEnd, endStart: pair.endStart,
+                    shrinkIncomplete: removals.has(pair.beginStart) });
+            }
+        }
+        if (!environments.size) return;
+        let requestIsCurrent = () => vscode.window.activeTextEditor == editor &&
+            editor.document.version == version && isAutoAlignEnabled(editor.document);
         let font = vscode.workspace.getConfiguration('editor', {
             uri: editor.document.uri, languageId: editor.document.languageId,
         });
@@ -218,22 +309,41 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
             size: font.get<number>('fontSize', 14),
             weight: font.get<string>('fontWeight', 'normal'),
             letterSpacing: font.get<number>('letterSpacing', 0),
-        }, text);
-        if (vscode.window.activeTextEditor != editor || editor.document.version != version ||
-            !isAutoAlignEnabled(editor.document)) return;
+        }, ' &' + [...environments.values()].map(({ beginEnd, endStart }) => text.slice(beginEnd, endStart)).join(''),
+        requestIsCurrent);
+        if (!requestIsCurrent()) return;
         let tabSize = typeof editor.options.tabSize == 'number' ? editor.options.tabSize : 4;
         let edits = new Map<number, TextEdit>();
-        for (let offset of offsets) {
-            for (let edit of getAlignmentEdits(text, offset, options, tabSize, characterWidths)) {
+        const activeOffset = editor.document.offsetAt(editor.selection.active);
+        const activePair = snapshot.environmentPairAt(activeOffset);
+        const consumed = new Set<number>();
+        for (let { offset, beginEnd, endStart, shrinkIncomplete } of environments.values()) {
+            const rowOffset = activeOffset >= beginEnd && activeOffset <= endStart && activePair?.beginEnd == beginEnd ? activeOffset : offset;
+            if (shrinkIncomplete) {
+                const pair = snapshot.environmentPairAt(offset);
+                const removal = pair && removals.get(pair.beginStart);
+                const structure = pair && getAlignmentStructure(text, pair, snapshot);
+                const row = removal && structure?.rows.find((row) => row.start <= removal.offset - structure.base && removal.offset - structure.base <= row.end);
+                if (structure?.closed && row?.valid && (row.content || !row.nonData)) consumed.add(removal!.id);
+            }
+            for (let edit of getAutoAlignmentEdits(text, rowOffset, options, tabSize, characterWidths, snapshot, shrinkIncomplete)) {
                 edits.set(edit.start, edit);
             }
         }
-        if (!edits.size) return;
+        function consumeRemovals() {
+            const pending = pendingColumnRemovals.get(editor.document);
+            for (const [begin, token] of pending?.tokens || []) {
+                if (consumed.has(token.id)) pending!.tokens.delete(begin);
+            }
+            if (!pending?.tokens.size) pendingColumnRemovals.delete(editor.document);
+        }
+        if (!edits.size) { consumeRemovals(); return; }
         let alignmentEdits = [...edits.values()];
         let selections = editor.selections.map((selection) => ({
             anchor: mapAlignmentOffset(editor.document.offsetAt(selection.anchor), alignmentEdits),
             active: mapAlignmentOffset(editor.document.offsetAt(selection.active), alignmentEdits),
         }));
+        const request = cursorRequest;
         aligningLatex = true;
         applyingLatexEdit = true;
         try {
@@ -245,7 +355,9 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
                     ), edit.text);
                 }
             }, { undoStopBefore: false, undoStopAfter: false });
-            if (applied && editor.document.version == version + 1) {
+            if (applied) consumeRemovals();
+            if (applied && editor.document.version == version + 1 && cursorRequest == request &&
+                vscode.window.activeTextEditor == editor) {
                 editor.selections = selections.map((selection) => new vscode.Selection(
                     editor.document.positionAt(selection.anchor),
                     editor.document.positionAt(selection.active)
@@ -260,23 +372,35 @@ function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocument
     }, 150);
 }
 
+function hasPendingColumnRemoval(editor: vscode.TextEditor, snapshot: LatexDocumentState, offset: number) {
+    const frame = snapshot.contextAt(offset).currentEnvironmentFrame;
+    return Boolean(frame && pendingColumnRemovals.get(editor.document)?.tokens.has(frame.beginStart));
+}
+
 async function smartEnter(editor: vscode.TextEditor) {
     if (editor.selections.length != 1 || !editor.selection.isEmpty) {
         await typeText('\n');
         return;
     }
 
-    let text = editor.document.getText();
+    let snapshot = getDocumentState(editor.document);
+    let text = snapshot.text;
     let offset = editor.document.offsetAt(editor.selection.active);
-    let plan = getSmartEnterPlan(text, offset, getLatexContextOptions());
+    const autoAlign = isAutoAlignEnabled(editor.document);
+    let plan = getSmartEnterPlan(text, offset, getLatexContextOptions(), snapshot, autoAlign,
+        editor.document.eol == vscode.EndOfLine.CRLF ? '\r\n' : '\n',
+        hasPendingColumnRemoval(editor, snapshot, offset));
 
     if (!plan.handled) {
         await typeText('\n');
         return;
     }
 
-    let inserted = await applyEdits(editor, plan.edits);
-    if (inserted) {
+    // Leave this undo step open for the pending whitespace alignment.
+    const request = cursorRequest;
+    let inserted = await applyEdits(editor, plan.edits, true, !autoAlign);
+    if (inserted && editor.document.version == snapshot.version + 1 && cursorRequest == request &&
+        vscode.window.activeTextEditor == editor) {
         let newPosition = editor.document.positionAt(plan.cursorOffset as number);
         editor.selection = new vscode.Selection(newPosition, newPosition);
         editor.revealRange(new vscode.Range(newPosition, newPosition));
@@ -289,30 +413,36 @@ function isPlainEnterChange(change: vscode.TextDocumentContentChangeEvent) {
 
 async function recoverSmartEnterAfterPlainEnter(
     editor: vscode.TextEditor,
-    change: vscode.TextDocumentContentChangeEvent
+    change: vscode.TextDocumentContentChangeEvent,
+    previous: LatexDocumentState | undefined,
+    current: LatexDocumentState
 ) {
     if (applyingLatexEdit || !isPlainEnterChange(change)) {
         return false;
     }
 
-    let currentText = editor.document.getText();
-    let beforeEnterText = (
-        currentText.slice(0, change.rangeOffset) +
-        currentText.slice(change.rangeOffset + change.text.length)
-    );
+    let currentText = current.text;
+    let beforeEnterText = previous?.text ?? (currentText.slice(0, change.rangeOffset) + currentText.slice(change.rangeOffset + change.text.length));
+    const autoAlign = isAutoAlignEnabled(editor.document);
     let plan = getSmartEnterRecoveryPlan(
         beforeEnterText,
         change.rangeOffset,
         currentText,
-        getLatexContextOptions()
+        getLatexContextOptions(),
+        previous,
+        editor.selections.length == 1 && autoAlign,
+        editor.document.eol == vscode.EndOfLine.CRLF ? '\r\n' : '\n',
+        hasPendingColumnRemoval(editor, previous ?? current, change.rangeOffset)
     );
 
-    if (!plan.handled) {
+    if (!plan.handled || editor.document.version != current.version || vscode.window.activeTextEditor != editor) {
         return false;
     }
 
-    let inserted = await applyEdits(editor, plan.edits);
-    if (inserted && typeof plan.cursorOffset == 'number') {
+    const request = cursorRequest;
+    let inserted = await applyEdits(editor, plan.edits, false, !autoAlign);
+    if (inserted && typeof plan.cursorOffset == 'number' && editor.document.version == current.version + 1 &&
+        cursorRequest == request && vscode.window.activeTextEditor == editor) {
         let newPosition = editor.document.positionAt(plan.cursorOffset);
         editor.selection = new vscode.Selection(newPosition, newPosition);
         editor.revealRange(new vscode.Range(newPosition, newPosition));
@@ -321,32 +451,26 @@ async function recoverSmartEnterAfterPlainEnter(
     return inserted;
 }
 
-function getTextBeforeChange(currentText: string, change: vscode.TextDocumentContentChangeEvent) {
-    return (
-        currentText.slice(0, change.rangeOffset) +
-        currentText.slice(change.rangeOffset + change.text.length)
-    );
-}
-
 async function recoverEnvironmentNameSyncAfterChange(
     editor: vscode.TextEditor,
     change: vscode.TextDocumentContentChangeEvent,
-    beforeText: string,
-    currentText: string
+    previous: LatexDocumentState | undefined,
+    current: LatexDocumentState
 ) {
-    if (applyingLatexEdit || !isLatexLikeDocument(editor.document)) {
+    if (applyingLatexEdit || !previous || !isLatexLikeDocument(editor.document)) {
         return false;
     }
 
     let plan = createEnvironmentNameSyncPlan(
-        beforeText,
-        currentText,
+        previous.text,
+        current.text,
         {
             rangeOffset: change.rangeOffset,
             rangeLength: change.rangeLength,
             text: change.text,
         },
-        getLatexContextOptions()
+        getLatexContextOptions(),
+        previous
     );
 
     if (!plan.handled) {
@@ -395,33 +519,52 @@ async function fallbackTab() {
 }
 
 async function smartTab(editor: vscode.TextEditor) {
-    let text = editor.document.getText();
+    cursorRequest++;
+    let snapshot = getDocumentState(editor.document);
+    let text = snapshot.text;
     let options = getLatexContextOptions();
-    let shouldInsertSeparator = editor.selections.every((selection) => {
-        return shouldInsertAlignmentSeparator(text, editor.document.offsetAt(selection.active), options);
+    const plans = editor.selections.map((selection) => {
+        const offset = editor.document.offsetAt(selection.active);
+        if (selection.isEmpty) return getSmartTabPlan(text, offset, options, snapshot);
+        if (!shouldInsertAlignmentSeparator(text, offset, options, snapshot)) return undefined;
+        const start = editor.document.offsetAt(selection.start);
+        return { edits: [{ start, end: editor.document.offsetAt(selection.end), text: ' & ' }], cursorOffset: start + 3 };
     });
 
-    if (!shouldInsertSeparator) {
+    if (plans.some((plan) => !plan)) {
         await fallbackTab();
         return;
     }
 
-    await editor.edit((editBuilder) => {
-        for (let selection of editor.selections) {
-            editBuilder.replace(selection, ' & ');
-        }
+    const edits = [...new Map(plans.flatMap((plan) => plan!.edits).map((edit) =>
+        [`${edit.start}:${edit.end}`, edit] as const)).values()];
+    const cursors = plans.map((plan) => {
+        const own = plan!.edits[0];
+        if (!own) return mapAlignmentOffset(plan!.cursorOffset, edits);
+        // Each plan includes its own edit; only earlier edits from other carets shift it.
+        return plan!.cursorOffset + edits.reduce((delta, edit) => delta +
+            (edit.start != own.start && edit.end <= own.start ? edit.text.length - (edit.end - edit.start) : 0), 0);
     });
+    if (edits.length && !await applyEdits(editor, edits, true, !isAutoAlignEnabled(editor.document))) return;
+    if (editor.document.version != snapshot.version + (edits.length ? 1 : 0) ||
+        vscode.window.activeTextEditor != editor) return;
+    editor.selections = cursors.map((offset) => {
+        const position = editor.document.positionAt(offset);
+        return new vscode.Selection(position, position);
+    });
+    editor.revealRange(new vscode.Range(editor.selection.active, editor.selection.active));
 }
 
 async function convertEnvironment(editor: vscode.TextEditor) {
-    let text = editor.document.getText();
+    let snapshot = getDocumentState(editor.document);
+    let text = snapshot.text;
     let options = getLatexContextOptions();
     let selection = editor.selection;
     let offset = editor.document.offsetAt(selection.active);
     let selectionStart = editor.document.offsetAt(selection.start);
     let selectionEnd = editor.document.offsetAt(selection.end);
-    let environmentPair = findLatexEnvironmentPairAt(text, offset, options);
-    let delimiterPair = findDisplayMathDelimiterAt(text, offset);
+    let environmentPair = findLatexEnvironmentPairAt(text, offset, options, snapshot);
+    let delimiterPair = findDisplayMathDelimiterAt(text, offset, snapshot);
     let currentName = environmentPair?.name;
     let target = await vscode.window.showQuickPick(
         CONVERTIBLE_ENVIRONMENTS
@@ -445,7 +588,7 @@ async function convertEnvironment(editor: vscode.TextEditor) {
 
     let targetArguments = '';
     if (isTableLikeEnvironment(target.label)) {
-        let needsArguments = !environmentPair || conversionNeedsTableArguments(text, offset, target.label);
+        let needsArguments = !environmentPair || conversionNeedsTableArguments(text, offset, target.label, snapshot);
         if (needsArguments) {
             let columnSpec = await vscode.window.showInputBox({
                 prompt: `Column specification for ${target.label}`,
@@ -461,7 +604,7 @@ async function convertEnvironment(editor: vscode.TextEditor) {
 
     let plan = !selection.isEmpty && !environmentPair && !delimiterPair
         ? createWrapEnvironmentPlan(text, selectionStart, selectionEnd, target.label, targetArguments)
-        : createEnvironmentConversionPlan(text, offset, target.label, targetArguments, options);
+        : createEnvironmentConversionPlan(text, offset, target.label, targetArguments, options, snapshot);
 
     if (!plan.handled) {
         vscode.window.showInformationMessage('No LaTeX environment or display math delimiter found at the cursor.');
@@ -477,9 +620,10 @@ async function convertEnvironment(editor: vscode.TextEditor) {
 }
 
 async function renameMatchingEnvironment(editor: vscode.TextEditor) {
-    let text = editor.document.getText();
+    let snapshot = getDocumentState(editor.document);
+    let text = snapshot.text;
     let offset = editor.document.offsetAt(editor.selection.active);
-    let pair = findLatexEnvironmentPairAt(text, offset, getLatexContextOptions());
+    let pair = findLatexEnvironmentPairAt(text, offset, getLatexContextOptions(), snapshot);
     if (!pair) {
         vscode.window.showInformationMessage('No LaTeX environment found at the cursor.');
         return;
@@ -548,7 +692,8 @@ async function wrapMathStructure(editor: vscode.TextEditor) {
         return;
     }
 
-    let text = editor.document.getText();
+    let snapshot = getDocumentState(editor.document);
+    let text = snapshot.text;
     let selection = editor.selection;
     let selectionStart = editor.document.offsetAt(selection.start);
     let selectionEnd = editor.document.offsetAt(selection.end);
@@ -559,7 +704,8 @@ async function wrapMathStructure(editor: vscode.TextEditor) {
             editor.document.offsetAt(selection.active),
             targetName,
             targetArguments,
-            getLatexContextOptions()
+            getLatexContextOptions(),
+            snapshot
         );
 
     if (!plan.handled) {
@@ -576,11 +722,13 @@ async function wrapMathStructure(editor: vscode.TextEditor) {
 }
 
 async function unwrapMathStructure(editor: vscode.TextEditor) {
-    let text = editor.document.getText();
+    let snapshot = getDocumentState(editor.document);
+    let text = snapshot.text;
     let plan = createUnwrapMathStructurePlan(
         text,
         editor.document.offsetAt(editor.selection.active),
-        getLatexContextOptions()
+        getLatexContextOptions(),
+        snapshot
     );
 
     if (!plan.handled) {
@@ -596,35 +744,57 @@ async function unwrapMathStructure(editor: vscode.TextEditor) {
     }
 }
 
-async function loadSnippets() {
-    SNIPPETS_BY_LANGUAGE.clear();
+function snippetLoadKey() {
+    return JSON.stringify([getSnippetDir(), getActiveSnippetProfile()]);
+}
 
-    let snippetDir = getSnippetDir();
-    if (!existsSync(snippetDir)) {
-        mkdirSync(snippetDir);
-    }
-
-    for (let entry of getSnippetFilesForProfile(snippetDir, getActiveSnippetProfile())) {
-        let fileData = readFileSync(entry.filePath, 'utf8');
-        let snippetList = SNIPPETS_BY_LANGUAGE.get(entry.language);
-        if (!snippetList) {
-            snippetList = [];
-            SNIPPETS_BY_LANGUAGE.set(entry.language, snippetList);
+function loadSnippets(): Promise<void> {
+    const snippetDir = getSnippetDir();
+    const profile = getActiveSnippetProfile();
+    const key = JSON.stringify([snippetDir, profile]);
+    if (pendingSnippetLoad?.key == key) return pendingSnippetLoad.promise;
+    const sequence = ++snippetLoadSequence;
+    const promise = Promise.resolve().then(() => {
+        const next = new Map<string, HSnippet[]>();
+        if (!existsSync(snippetDir)) mkdirSync(snippetDir);
+        for (let entry of getSnippetFilesForProfile(snippetDir, profile)) {
+            let snippetList = next.get(entry.language);
+            if (!snippetList) {
+                snippetList = [];
+                next.set(entry.language, snippetList);
+            }
+            snippetList.push(...parse(readFileSync(entry.filePath, 'utf8')));
         }
-        snippetList.push(...parse(fileData));
-    }
-
-    let globalSnippets = SNIPPETS_BY_LANGUAGE.get('all');
-    if (globalSnippets) {
-        for (let [language, snippetList] of SNIPPETS_BY_LANGUAGE.entries()) {
-            if (language != 'all') snippetList.push(...globalSnippets);
+        const globalSnippets = next.get('all');
+        if (globalSnippets) {
+            for (let [language, snippetList] of next) {
+                if (language != 'all') snippetList.push(...globalSnippets);
+            }
         }
-    }
+        for (let snippetList of next.values()) {
+            snippetList.sort((a, b) => b.priority - a.priority);
+        }
+        if (sequence == snippetLoadSequence) SNIPPETS_BY_LANGUAGE = next;
+    }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`Failed to load snippets: ${message}`);
+    }).finally(() => {
+        if (pendingSnippetLoad?.promise == promise) pendingSnippetLoad = undefined;
+    });
+    pendingSnippetLoad = { key, promise };
+    return promise;
+}
 
-    // Sort snippets by descending priority.
-    for (let snippetList of SNIPPETS_BY_LANGUAGE.values()) {
-        snippetList.sort((a, b) => b.priority - a.priority);
+function loadSnippetProfile(): Promise<void> {
+    const operation = profileReload;
+    if (operation && operation.key == snippetLoadKey()) {
+        operation.observed = true;
+        operation.promise ??= loadSnippets();
+        if (!operation.updating) profileReload = undefined;
+        return operation.promise;
     }
+    profileReload = undefined;
+    return loadSnippets();
 }
 
 async function selectSnippetProfile() {
@@ -655,10 +825,26 @@ async function selectSnippetProfile() {
         return;
     }
 
-    await vscode.workspace
-        .getConfiguration('hsnips')
-        .update('profiles.activeProfile', picked.profile, vscode.ConfigurationTarget.Global);
-    await loadSnippets();
+    const configuration = vscode.workspace.getConfiguration('hsnips');
+    const unchanged = picked.profile == (configuration.get<string>('profiles.activeProfile') ?? '');
+    const operation = {
+        key: JSON.stringify([snippetDir, picked.profile]),
+        promise: undefined as Promise<void> | undefined,
+        updating: true,
+        observed: false,
+    };
+    profileReload = operation;
+    let updated = false;
+    try {
+        await configuration.update('profiles.activeProfile', picked.profile, vscode.ConfigurationTarget.Global);
+        updated = true;
+        await (operation.promise ??= loadSnippets());
+    } finally {
+        operation.updating = false;
+        if (profileReload == operation && (!updated || unchanged || operation.observed)) {
+            profileReload = undefined;
+        }
+    }
     vscode.window.showInformationMessage(
         picked.profile ? `vscode-hypersnips profile: ${picked.profile}` : "vscode-hypersnips profile: base only"
     );
@@ -722,11 +908,8 @@ export function activate(context: vscode.ExtensionContext) {
         if (alignmentTimer) clearTimeout(alignmentTimer);
     }));
     loadSnippets();
-    if (vscode.window.activeTextEditor) {
-        DOCUMENT_TEXT_CACHE.set(
-            vscode.window.activeTextEditor.document,
-            vscode.window.activeTextEditor.document.getText()
-        );
+    if (vscode.window.activeTextEditor && isLatexLikeDocument(vscode.window.activeTextEditor.document)) {
+        getDocumentState(vscode.window.activeTextEditor.document);
     }
     updateMathContext(vscode.window.activeTextEditor);
     registerSnippetManager(context, loadSnippets, getActiveSnippetProfile);
@@ -865,13 +1048,12 @@ export function activate(context: vscode.ExtensionContext) {
     // Forward all document changes so that the active snippet can update its related blocks.
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument(async (e) => {
-            let previousText = DOCUMENT_TEXT_CACHE.get(e.document);
-            let currentText = e.document.getText();
+            const states = isLatexLikeDocument(e.document) ? updateDocumentState(e) : undefined;
             let activeEditor = vscode.window.activeTextEditor;
             try {
                 if (activeEditor && e.document == activeEditor.document) {
                     updateMathContext(activeEditor);
-                    scheduleAlignment(activeEditor, e);
+                    scheduleAlignment(activeEditor, e, states?.previous);
                 }
 
                 if (SNIPPET_STACK.length && SNIPPET_STACK[0].editor.document == e.document) {
@@ -887,19 +1069,24 @@ export function activate(context: vscode.ExtensionContext) {
                 if (
                     activeEditor &&
                     e.document == activeEditor.document &&
-                    e.contentChanges.length == 1 &&
+                    e.contentChanges.length == 1 && states &&
                     await recoverEnvironmentNameSyncAfterChange(
                         activeEditor,
                         mainChange,
-                        previousText || getTextBeforeChange(currentText, mainChange),
-                        currentText
+                        states.previous,
+                        states.current
                     )
                 ) {
                     return;
                 }
 
                 if (activeEditor && e.document == activeEditor.document && isPlainEnterChange(mainChange)) {
-                    void recoverSmartEnterAfterPlainEnter(activeEditor, mainChange).then(undefined, console.error);
+                    if (e.reason) return;
+                    void recoverSmartEnterAfterPlainEnter(
+                        activeEditor, mainChange,
+                        e.contentChanges.length == 1 ? states?.previous : undefined,
+                        states?.current ?? getDocumentState(e.document)
+                    ).then(undefined, console.error);
                     return;
                 }
 
@@ -913,7 +1100,7 @@ export function activate(context: vscode.ExtensionContext) {
                 if (!editor || e.document != editor.document) return;
 
                 let latexContext = getEditorLatexContext(editor);
-                snippets = snippets.filter((snippet) => canExpandSnippetInContext(snippet, latexContext));
+                snippets = snippets.filter((snippet) => snippet.automatic && canExpandSnippetInContext(snippet, latexContext));
 
                 let mainChangePosition = mainChange.range.start.translate(0, mainChange.text.length);
                 let completion = getAutomaticCompletion(e.document, mainChangePosition, snippets);
@@ -922,11 +1109,16 @@ export function activate(context: vscode.ExtensionContext) {
                     expandSnippet(completion, editor);
                     return;
                 }
-            } finally {
-                DOCUMENT_TEXT_CACHE.set(e.document, e.document.getText());
+            } catch (error) {
+                console.error(error);
             }
         })
     );
+
+    context.subscriptions.push(vscode.workspace.onDidCloseTextDocument((document) => {
+        documentStates.delete(document);
+        pendingColumnRemovals.delete(document);
+    }));
 
     // Remove any stale snippet instances.
     context.subscriptions.push(
@@ -939,7 +1131,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor((editor) => {
             if (editor) {
-                DOCUMENT_TEXT_CACHE.set(editor.document, editor.document.getText());
+                if (isLatexLikeDocument(editor.document)) getDocumentState(editor.document);
             }
             updateMathContext(editor);
         })
@@ -947,6 +1139,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.window.onDidChangeTextEditorSelection((e) => {
+            if (e.kind) cursorRequest++;
             while (SNIPPET_STACK.length) {
                 if (e.selections.some((s) => SNIPPET_STACK[0].range.contains(s))) {
                     break;
@@ -959,17 +1152,18 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration((event) => {
-            if (event.affectsConfiguration('hsnips.autoAlign') && alignmentTimer) {
-                clearTimeout(alignmentTimer);
+            if (event.affectsConfiguration('hsnips.autoAlign')) {
+                if (alignmentTimer) clearTimeout(alignmentTimer);
                 alignmentTimer = undefined;
+                pendingColumnRemovals = new WeakMap();
             }
             if (event.affectsConfiguration('hsnips.context')) {
-                latexContextCache = undefined;
+                documentStates = new WeakMap();
                 latexContextOptionsCache = undefined;
                 updateMathContext(vscode.window.activeTextEditor);
             }
             if (event.affectsConfiguration('hsnips.profiles.activeProfile')) {
-                loadSnippets();
+                void loadSnippetProfile();
             }
         })
     );

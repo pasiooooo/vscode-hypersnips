@@ -1,0 +1,145 @@
+{
+  "productionCommit": "beb2205",
+  "runtime": "v25.8.1",
+  "method": "Forced GC twice before/after; current and previous snapshots stay live. Test thresholds are broad memory regression limits, not timing gates.",
+  "cases": [
+    {
+      "name": "100 distinct edits in same 1 MiB document",
+      "beforeFixBytes": 104978424,
+      "afterFixBytes": 100360,
+      "limitBytes": 12582912
+    },
+    {
+      "name": "16 MiB deletion to current/previous 125/126 chars",
+      "beforeFixBytes": 16743784,
+      "afterFixBytes": -33976,
+      "limitBytes": 8388608
+    },
+    {
+      "name": "32 cached contexts near end of 1 MiB pending block",
+      "beforeFixBytes": 33598408,
+      "afterFixBytes": 44072,
+      "limitBytes": 8388608
+    }
+  ],
+  "note": "Before values are separate observed RED runs of each regression before its fix. Negative deltas reflect GC/noise. These probes do not prove absence of all leaks.",
+  "ownershipCostProbe": {
+    "samples": 200,
+    "warmups": 10,
+    "method": "same process/ES2020 loader; rotate3implementation order eachsample; baseline453 vs fixedgap+join+ownedstrings vs samefixedcode withoutownershipcopies",
+    "timedSourceSha256": "664c1a1cab50347b7682ce0bbe56b7677d7716a9208dd81963d6f549850b18de",
+    "cases": {
+      "cold1MiB": {
+        "chars": 1048608,
+        "changes": 0,
+        "baseline453": {
+          "medianMs": 25.92659999999887,
+          "p95Ms": 38.3808999999992,
+          "parsedBlocks": 14564,
+          "reusedBlocks": 0
+        },
+        "fixed": {
+          "medianMs": 31.7570999999989,
+          "p95Ms": 48.08289999999943,
+          "parsedBlocks": 14564,
+          "reusedBlocks": 0
+        },
+        "strippedCopies": {
+          "medianMs": 24.92750000000001,
+          "p95Ms": 32.880300000000716,
+          "parsedBlocks": 14564,
+          "reusedBlocks": 0
+        }
+      },
+      "oneEdit1MiB": {
+        "chars": 1048608,
+        "changes": 1,
+        "baseline453": {
+          "medianMs": 1.1935000000012224,
+          "p95Ms": 2.050599999998667,
+          "parsedBlocks": 1,
+          "reusedBlocks": 14563
+        },
+        "fixed": {
+          "medianMs": 1.0529999999998836,
+          "p95Ms": 1.4451999999982945,
+          "parsedBlocks": 1,
+          "reusedBlocks": 14563
+        },
+        "strippedCopies": {
+          "medianMs": 0.8767999999981839,
+          "p95Ms": 1.3892999999989115,
+          "parsedBlocks": 1,
+          "reusedBlocks": 14563
+        }
+      },
+      "unfinished256KiB": {
+        "chars": 266645,
+        "changes": 1,
+        "baseline453": {
+          "medianMs": 17.26640000000043,
+          "p95Ms": 19.13839999999982,
+          "parsedBlocks": 1,
+          "reusedBlocks": 0
+        },
+        "fixed": {
+          "medianMs": 18.09700000000157,
+          "p95Ms": 19.374400000000605,
+          "parsedBlocks": 1,
+          "reusedBlocks": 0
+        },
+        "strippedCopies": {
+          "medianMs": 17.181800000002113,
+          "p95Ms": 19.01459999999861,
+          "parsedBlocks": 1,
+          "reusedBlocks": 0
+        }
+      },
+      "twoEdits1MiB": {
+        "chars": 1048608,
+        "changes": 2,
+        "baseline453": {
+          "medianMs": 15.287799999998242,
+          "p95Ms": 21.835300000002462,
+          "parsedBlocks": 7283,
+          "reusedBlocks": 7281
+        },
+        "fixed": {
+          "medianMs": 1.1103000000002794,
+          "p95Ms": 1.6850999999987835,
+          "parsedBlocks": 2,
+          "reusedBlocks": 14562
+        },
+        "strippedCopies": {
+          "medianMs": 0.8921000000009371,
+          "p95Ms": 1.4289000000026135,
+          "parsedBlocks": 2,
+          "reusedBlocks": 14562
+        }
+      },
+      "hundredEdits1MiB": {
+        "chars": 1048608,
+        "changes": 100,
+        "baseline453": {
+          "medianMs": 49.70369999999821,
+          "p95Ms": 65.017399999997,
+          "parsedBlocks": 14420,
+          "reusedBlocks": 144
+        },
+        "fixed": {
+          "medianMs": 1.3876000000018394,
+          "p95Ms": 1.8019999999960419,
+          "parsedBlocks": 100,
+          "reusedBlocks": 14464
+        },
+        "strippedCopies": {
+          "medianMs": 1.1530000000057044,
+          "p95Ms": 1.4587000000028638,
+          "parsedBlocks": 100,
+          "reusedBlocks": 14464
+        }
+      }
+    },
+    "note": "Exploratory paired probe ran before final environment-name ownership copy. Fixtures contain no environment-name tokens in timed paths. Exact final production measurements are in performance-results-beb2205.json."
+  }
+}

@@ -2,7 +2,7 @@ name: CI and release
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/performance-refactor]
     tags: ['v*']
   pull_request:
     branches: [main]
@@ -26,6 +26,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Diagnose native font measurement
+        if: failure() && runner.os == 'Windows'
+        run: node scripts/diagnose-fonts.cjs
+      - name: Extension host tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:integration
+      - name: Extension host tests (Windows)
+        if: runner.os == 'Windows'
+        run: npm run test:integration
 
   package:
     needs: check
@@ -41,22 +50,34 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Verify release version
+      - name: Validate release version and prepare notes
         if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
+        run: node scripts/release-notes.cjs "$GITHUB_REF_NAME"
 
       - name: Install
         run: npm ci
 
       - name: Package VSIX
+        if: github.ref != 'refs/heads/codex/performance-refactor'
         run: npm run package
+
+      - name: Package performance preview
+        if: github.ref == 'refs/heads/codex/performance-refactor'
+        run: npm run package:performance
 
       - name: Upload VSIX
         uses: actions/upload-artifact@v4
         with:
           name: vscode-hypersnips-vsix
-          path: dist/*.vsix
+          path: dist/**/*.vsix
+          if-no-files-found: error
+
+      - name: Upload release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: tmp/release-notes.md
           if-no-files-found: error
 
   release:
@@ -70,9 +91,13 @@ jobs:
         with:
           name: vscode-hypersnips-vsix
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: tmp
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.vsix --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+          gh release create "$GITHUB_REF_NAME" dist/*.vsix --verify-tag --title "$GITHUB_REF_NAME" --notes-file tmp/release-notes.md
