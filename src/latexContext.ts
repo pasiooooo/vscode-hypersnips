@@ -462,7 +462,7 @@ function isInsideMarkdownCodeInPrefix(beforeCursor: string, markdownFenceRanges:
   return inlineBackticks ? inlineBackticks.length % 2 == 1 : false;
 }
 
-function findMatchingBrace(text: string, openBrace: number, limit: number) {
+export function findMatchingBrace(text: string, openBrace: number, limit: number) {
   let depth = 0;
   for (let index = openBrace; index < limit; index++) {
     if (isEscaped(text, index)) {

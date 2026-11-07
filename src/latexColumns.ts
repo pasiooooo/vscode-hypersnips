@@ -336,6 +336,7 @@ export type AlignmentStructure = NonNullable<ReturnType<typeof getAlignmentStruc
 function columnSpecificationEdit(structure: AlignmentStructure, expected: number, shrink: boolean): TextEdit | undefined {
   const { columns, appendOffset, columnEnds } = structure.declared;
   if (!columns || appendOffset === undefined) return;
+  if (shrink && structure.rows.some((row) => !row.valid && row.content)) shrink = false;
   if (expected > columns) {
     const start = structure.base + appendOffset;
     return { start, end: start, text: 'l'.repeat(expected - columns) };
@@ -357,6 +358,7 @@ function columnSpecificationEdit(structure: AlignmentStructure, expected: number
 
 export function getAlignmentColumnEdits(structure: AlignmentStructure, offset?: number, shrinkIncomplete = false): TextEdit[] {
   if (!structure.closed) return [];
+  const canShrink = !structure.rows.some((row) => !row.valid && row.content);
   const position = offset === undefined ? undefined : offset - structure.base;
   const rows = structure.rows.filter((row) => row.valid && (row.content || (row.complete && !row.nonData) ||
     (shrinkIncomplete && !row.nonData && position !== undefined && row.start <= position && position <= row.end)));
@@ -374,7 +376,7 @@ export function getAlignmentColumnEdits(structure: AlignmentStructure, offset?: 
   }));
   for (const row of rows) {
     for (const separator of row.separators) {
-      if (separator.column >= expected) {
+      if (canShrink && separator.column >= expected) {
         const start = structure.base + separator.start;
         edits.push({ start, end: start + 1, text: '' });
       }

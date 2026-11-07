@@ -8,15 +8,15 @@ function marked(source: string) {
   return { text: source.replace('<cursor>', ''), offset };
 }
 
-function check(source: string, expected: string, enabled = true, options: LatexContextOptions = {}) {
+function check(source: string, expected: string, enabled = true, options: LatexContextOptions = {}, shrink = false) {
   const { text, offset } = marked(source);
   for (const snapshot of [undefined, new LatexDocumentState(text, 1, options)]) {
-    const plan = getSmartEnterPlan(text, offset, options, snapshot, enabled);
+    const plan = getSmartEnterPlan(text, offset, options, snapshot, enabled, undefined, shrink);
     assert.ok(plan.handled, source);
     const updated = applyTextEditsToString(text, plan.edits);
     assert.equal(updated.slice(0, plan.cursorOffset) + '<cursor>' + updated.slice(plan.cursorOffset), expected);
     const plainEnter = text.slice(0, offset) + (text.includes('\r\n') ? '\r\n' : '\n') + text.slice(offset);
-    const recovery = getSmartEnterRecoveryPlan(text, offset, plainEnter, options, snapshot, enabled);
+    const recovery = getSmartEnterRecoveryPlan(text, offset, plainEnter, options, snapshot, enabled, undefined, shrink);
     assert.ok(recovery.handled, 'native Enter recovery must produce the same completion');
     assert.equal(applyTextEditsToString(plainEnter, recovery.edits), updated);
     assert.equal(recovery.cursorOffset, plan.cursorOffset);
@@ -118,6 +118,35 @@ check(String.raw`\begin{tabular}{|lc|}
   a & b & c \\[2pt] % note
   <cursor>
 \end{tabular}`);
+
+for (const cell of ['\\text{unfinished', '\\lstinline!value!', '\\mintinline{tex}!value!', '\\Verb!value!', '\\verb!value!']) {
+  const { text, offset } = marked(`\\begin{tabular}{lll}\n  a & b \\\\<cursor>\n  c & d & ${cell} \\\\\n\\end{tabular}`);
+  for (const snapshot of [undefined, new LatexDocumentState(text)]) {
+    const plan = getSmartEnterPlan(text, offset, {}, snapshot, true, undefined, true);
+    assert.deepStrictEqual(plan.edits, [], `Enter must preserve uncertain occupied columns: ${cell}`);
+    const plainEnter = text.slice(0, offset) + '\n' + text.slice(offset);
+    const recovery = getSmartEnterRecoveryPlan(text, offset, plainEnter, {}, snapshot, true, undefined, true);
+    assert.deepStrictEqual(recovery.edits, [], 'native Enter recovery keeps the same column declaration');
+  }
+}
+check(String.raw`\begin{tabular}{lll}
+  c & d \\
+  a & b<cursor>
+\end{tabular}`, String.raw`\begin{tabular}{ll}
+  c & d \\
+  a & b \\
+  <cursor>
+\end{tabular}`, true, {}, true);
+check(String.raw`\begin{tabular}{lll}
+  a & b \\<cursor>
+  c & d & e & f \\
+  g & h & \lstinline!value! \\
+\end{tabular}`, String.raw`\begin{tabular}{llll}
+  a & b & & \\
+  <cursor>
+  c & d & e & f \\
+  g & h & \lstinline!value! \\
+\end{tabular}`, true, {}, true);
 
 for (let fixture = 0; fixture < 35; fixture++) {
   const declared = 1 + fixture % 7;

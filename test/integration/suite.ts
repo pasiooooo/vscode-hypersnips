@@ -105,6 +105,26 @@ export async function run() {
     await vscode.commands.executeCommand('redo');
     await until(() => editor.document.getText() === after, 'redo shrinks empty columns again');
   });
+  for (const cell of ['\\lstinline!value!', '\\text{unfinished']) {
+    for (const command of ['hsnips.smartEnter', 'type']) {
+      await test('uncertain occupied third column survives deletion and ' + command + ': ' + cell, async () => {
+        const editor = await openMarked(`\\begin{tabular}{lll}\n  a & b &| \\\\\n  c & d & ${cell} \\\\\n\\end{tabular}`);
+        await configure(true);
+        await vscode.commands.executeCommand('deleteLeft');
+        await delay(400);
+        assert.strictEqual(editor.document.lineAt(0).text, '\\begin{tabular}{lll}');
+        assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 3);
+        const end = editor.document.lineAt(1).range.end;
+        editor.selection = new vscode.Selection(end, end);
+        await vscode.commands.executeCommand(command, ...(command === 'type' ? [{ text: '\n' }] : []));
+        await until(() => editor.document.lineCount === 5, 'Enter after the completed row');
+        await delay(400);
+        assert.strictEqual(editor.document.lineAt(0).text, '\\begin{tabular}{lll}');
+        assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 3);
+        assert.ok(editor.document.getText().includes(`c & d & ${cell}`));
+      });
+    }
+  }
   await test('deleting to one column survives later typing and Enter', async () => {
     const editor = await openMarked('\\begin{tabular}{ll}\n  a & \\\\\n  b &| \\\\\n\\end{tabular}');
     await configure(true);
@@ -290,6 +310,42 @@ export async function run() {
       await until(() => editor.selection.active.character === column, 'next cell caret');
       assert.strictEqual(editor.document.getText(), before, 'existing separator navigation leaves content intact');
     }
+  });
+  for (const literal of ['\\lstinline!x&y!', '\\mintinline{tex}!x&y!', '\\Verb!x&y!']) {
+    await test('Tab skips code separators and falls back inside ' + literal, async () => {
+      const editor = await openMarked(`\\begin{tabular}{lll}\n  A & |${literal} & z \\\\\n\\end{tabular}`);
+      const before = editor.document.getText();
+      const nextCell = before.indexOf('& z') + 2;
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      await until(() => editor.document.offsetAt(editor.selection.active) === nextCell, 'Tab reaches the real separator after code');
+      assert.strictEqual(editor.document.getText(), before);
+      const inside = editor.document.positionAt(before.indexOf('x&y') + 1);
+      editor.selection = new vscode.Selection(inside, inside);
+      const version = editor.document.version;
+      await vscode.commands.executeCommand('hsnips.smartTab');
+      await until(() => editor.document.version > version, 'normal Tab inside code');
+      assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 3, 'code Tab does not insert a table separator');
+      assert.ok(editor.document.getText().includes('&y'), 'the code ampersand and its following character stay intact');
+      await vscode.commands.executeCommand('undo');
+      await until(() => editor.document.getText() === before, 'one undo removes normal Tab from code');
+    });
+  }
+  await test('complex literal options preserve code during Tab fallback', async () => {
+    const literal = '\\lstinline[escapeinside={a}{b}]!x&y!';
+    const editor = await openMarked(`\\begin{tabular}{lll}\n  A & |${literal} & z \\\\\n\\end{tabular}`);
+    const version = editor.document.version;
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.document.version > version, 'complex-header normal Tab');
+    assert.ok(editor.document.getText().includes(literal));
+    assert.strictEqual((editor.document.getText().match(/&/g) || []).length, 3);
+  });
+  await test('Tab skips nested braced Verb content', async () => {
+    const editor = await openMarked('\\begin{tabular}{lll}\n  A & |\\Verb{x{y{z}&q}r} & s \\\\\n\\end{tabular}');
+    const before = editor.document.getText();
+    const nextCell = before.indexOf('& s') + 2;
+    await vscode.commands.executeCommand('hsnips.smartTab');
+    await until(() => editor.document.offsetAt(editor.selection.active) === nextCell, 'Tab skips nested code braces and separators');
+    assert.strictEqual(editor.document.getText(), before);
   });
   for (const afterBreak of [false, true]) {
     await test('Tab inserts before an existing row break from ' + (afterBreak ? 'after' : 'before') + ' it', async () => {

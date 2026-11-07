@@ -1,5 +1,7 @@
 import * as assert from 'assert';
 import { getAutoAlignmentEdits, getAlignmentEdits } from '../src/latexAlignment';
+import { getAlignmentColumnEdits, getAlignmentStructure } from '../src/latexColumns';
+import { LatexDocumentState } from '../src/latexDocumentState';
 import { applyTextEditsToString } from '../src/latexEdit';
 
 for (const [spec, expected] of [
@@ -35,6 +37,37 @@ for (const [spec, expected] of [
   const preserved = applyTextEditsToString(commented, getAutoAlignmentEdits(commented, commented.indexOf('c &')));
   assert.ok(preserved.includes('% keep the comment\nl}'), 'do not discard preamble comments');
 }
+for (const cell of [
+  '\\lstinline!value!', '\\lstinline[language=TeX]!value&code!',
+  '\\mintinline{tex}!value!', '\\Verb!value!', '\\verb!value!', '\\text{unfinished',
+]) {
+  const text = `\\begin{tabular}{lll}\n  a & b \\\\\n  c & d & ${cell} \\\\\n\\end{tabular}`;
+  const offset = text.indexOf('a & b');
+  const state = new LatexDocumentState(text);
+  for (const snapshot of [undefined, state]) {
+    const frame = state.contextAt(offset).currentEnvironmentFrame!;
+    const structure = getAlignmentStructure(text, frame, snapshot)!;
+    const result = applyTextEditsToString(text, getAutoAlignmentEdits(text, offset, {}, 4, new Map(), snapshot));
+    assert.strictEqual(result.split('\n')[0], '\\begin{tabular}{lll}', `uncertain occupied cells keep their column format: ${cell}`);
+    assert.deepStrictEqual(getAlignmentColumnEdits(structure, offset), [], 'uncertain occupied rows prevent column synchronization');
+    assert.ok(result.includes(`c & d & ${cell}`), 'uncertain occupied cells remain intact');
+  }
+}
+{
+  const text = '\\begin{tabular}{lll}\n  a & b & c & d \\\\\n  e & f \\\\\n  g & h & \\lstinline!value! \\\\\n\\end{tabular}';
+  const offset = text.indexOf('e & f');
+  const state = new LatexDocumentState(text);
+  const structure = getAlignmentStructure(text, state.contextAt(offset).currentEnvironmentFrame!, state)!;
+  const result = applyTextEditsToString(text, getAlignmentColumnEdits(structure, offset));
+  assert.strictEqual(result, text.replace('{lll}', '{llll}').replace('e & f \\\\', 'e & f & & \\\\'),
+    'known occupied columns can still grow the declaration and complete safe peer rows');
+  const emptyTail = '\\begin{tabular}{lll}\n  a & b & \\\\\n  c & d \\\\\n  e & f & \\lstinline!value! \\\\\n\\end{tabular}';
+  const tailOffset = emptyTail.indexOf('c & d');
+  const tailState = new LatexDocumentState(emptyTail);
+  const tailStructure = getAlignmentStructure(emptyTail, tailState.contextAt(tailOffset).currentEnvironmentFrame!, tailState)!;
+  assert.deepStrictEqual(getAlignmentColumnEdits(tailStructure, tailOffset), [],
+    'uncertain rows protect peer trailing separators as well as the declaration');
+}
 for (const text of [
   '\\begin{dcases}\n  x&y \\\\\n\\end{dcases}',
   '\\begin{dcases}\n  x & \\text{if condition} \\\\\n  longer & \\text{otherwise} \\\\\n\\end{dcases}',
@@ -46,4 +79,4 @@ for (const text of [
   assert.strictEqual(result.replace(/[ \t]/g, ''), text.replace(/[ \t]/g, ''));
   assert.deepStrictEqual(getAlignmentEdits(result, result.indexOf('condition') >= 0 ? result.indexOf('condition') + 2 : result.indexOf('x')), []);
 }
-console.log('Alignment corrections: shrinking column formats, template preservation and immediate dcases alignment passed');
+console.log('Alignment corrections: safe shrinking, uncertain occupied cells, templates and immediate dcases alignment passed');

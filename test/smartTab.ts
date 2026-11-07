@@ -27,7 +27,20 @@ const cases = [
   ['a| \\\\\nb & c \\\\', 'a & |\\\\\nb & c \\\\'],
   ['a|b', 'a & |b'],
   ['  |', '   & |'],
+  ['A & |\\Verb{x{y{z}&q}r} & s \\\\', 'A & \\Verb{x{y{z}&q}r} & |s \\\\'],
+  ['A & \\Verb{x{y{z}&q}r} |& s \\\\', 'A & \\Verb{x{y{z}&q}r} & |s \\\\'],
+  ['A & |\\verb{x{ & s \\\\', 'A & \\verb{x{ & |s \\\\'],
 ];
+const literals = [
+  '\\lstinline!x&y!', '\\lstinline*[language=TeX]!x&y!', '\\lstinline!x&y\\\\z!',
+  '\\mintinline{tex}!x&y!', '\\mintinline[breaklines]{tex}{x&y}',
+  '\\mintinline{tex}{x&y{nested}}', '\\Verb!x&y!', '\\Verb[showspaces=true]!x&y!',
+];
+for (const literal of literals) {
+  cases.push([`A & |${literal} \\\\`, `A & & |${literal} \\\\`]);
+  cases.push([`A & |${literal} & z \\\\`, `A & ${literal} & |z \\\\`]);
+  cases.push([`A & ${literal} |& z \\\\`, `A & ${literal} & |z \\\\`]);
+}
 for (const [body, expected] of cases) {
   for (const eol of ['\n', '\r\n']) {
     const marked = ('\\begin{tabular}{lll}\n' + body + '\n\\end{tabular}').replace(/\n/g, eol);
@@ -40,7 +53,7 @@ for (const [body, expected] of cases) {
     assert.strictEqual(withCaret, ('\\begin{tabular}{lll}\n' + expected + '\n\\end{tabular}').replace(/\n/g, eol), body);
   }
 }
-for (const marked of [
+for (const source of [
   'plain| & text',
   '\\begin{matrix}\na % | & comment\n\\end{matrix}',
   '\\begin{matrix}\n\\text{a| & b}\n\\end{matrix}',
@@ -50,7 +63,20 @@ for (const marked of [
   '\\begin{matrix}\n\\verb!a|&b!\n\\end{matrix}',
   '```latex\n\\begin{matrix}\na| & b\n\\end{matrix}\n```',
   '\\begin{verbatim}\n\\begin{matrix}\na| & b\n\\end{matrix}\n\\end{verbatim}',
+  ...literals.map(literal => `\\begin{tabular}{lll}\nA & ${literal.replace('x&y', 'x|&y')} & z \\\\\n\\end{tabular}`),
+  '\\begin{tabular}{lll}\nA & |\\lstinline!x&y & z \\\\\n\\end{tabular}',
+  '\\begin{tabular}{lll}\nA & |\\lstinline[language=TeX!x&y! & z \\\\\n\\end{tabular}',
+  '\\begin{tabular}{lll}\nA & |\\mintinline{tex!x&y! & z \\\\\n\\end{tabular}',
+  '\\begin{tabular}{lll}\nA & |\\lstinline[escapeinside={a}{b}]!x&y! & z \\\\\n\\end{tabular}',
+  '\\begin{tabular}{lll}\nA & |\\mintinline[escapeinside={a}{b}]{tex}!x&y! & z \\\\\n\\end{tabular}',
+  '\\begin{tabular}{lll}\nA & \\Verb{x{y{z}|&q}r} & s \\\\\n\\end{tabular}',
+  '\\begin{tabular}{lll}\nA & |\\Verb{x{y{z}&q}r & s \\\\\n\\end{tabular}',
 ]) {
-  assert.strictEqual(getSmartTabPlan(marked.replace('|', ''), marked.indexOf('|')), undefined, marked);
+  for (const eol of ['\n', '\r\n']) {
+    const marked = source.replace(/\n/g, eol), text = marked.replace('|', ''), offset = marked.indexOf('|');
+    for (const snapshot of [undefined, new LatexDocumentState(text)]) {
+      assert.strictEqual(getSmartTabPlan(text, offset, {}, snapshot), undefined, marked);
+    }
+  }
 }
 console.log('Smart Tab navigation, row endings, protected separators and caret plans passed');
