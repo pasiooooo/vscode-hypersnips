@@ -3,7 +3,7 @@
 	"displayName": "vscode-hypersnips",
 	"description": "Programmable LaTeX snippets, smart alignment, and snippet management for VS Code.",
 	"icon": "images/vscode-hypersnips.png",
-	"version": "0.1.4",
+	"version": "0.2.0",
 	"publisher": "pasiooooo",
 	"author": "pasiooooo",
 	"homepage": "https://github.com/pasiooooo/vscode-hypersnips#readme",

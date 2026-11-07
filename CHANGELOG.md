@@ -6,6 +6,8 @@ GitHub Release 正文直接展示对应版本的完整内容；本文件也随 V
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-07
+
 ### Added
 
 - 补齐 `dcases`／`rcases`／`drcases` 及星号变种、星号矩阵、小矩阵、`alignat`／`flalign`／`eqnarray`／`split` 等分列环境，统一上下文、智能按键与自动对齐支持；补充 `multlined`、`lgathered`、`rgathered` 的智能换行。

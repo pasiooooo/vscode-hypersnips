@@ -1,6 +1,6 @@
 # 性能分支试用说明
 
-此分支基于 v0.1.4，插件标识仍为 pasiooooo.vscode-hypersnips。所有性能改动只在 codex/performance-refactor；经过自动验证及用户长期试用确认后，由用户创建 Pull Request 并合并 main，保留分阶段提交。
+本文件保留以 v0.1.4 为基础的性能分支试用步骤，方便复现当时的测试包。功能与性能改动已通过 [PR #1](https://github.com/pasiooooo/vscode-hypersnips/pull/1) 合入 main，并保留分阶段提交；当前版本安装与发布以 [CHANGELOG](../CHANGELOG.md) 和 [GitHub Releases](https://github.com/pasiooooo/vscode-hypersnips/releases) 为准。
 
 旧试用包 `4536c43` 存在连续编辑时保留旧字符串的问题，请用最新提交的替换包。恢复时使用原稳定版 v0.1.4，不要恢复到该旧试用包。
 
