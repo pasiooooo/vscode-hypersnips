@@ -366,14 +366,14 @@ npm run package
 
 性能试用通过后，由维护者创建 `codex/performance-refactor` → `main` 的 Pull Request，检查改动、测试结果及试用反馈，再选择 **Create a merge commit** 合并，以保留分阶段提交。若同步最新 `main` 后产生影响行为的改动，应重新测试并提供试用包。合并 PR 本身不会创建 Release。
 
-准备正式发布时另开版本准备分支。以下以未来的 `0.1.5` 为例，当前试用包仍保持 `0.1.4`：
+准备正式发布时另开版本准备分支。以下以 `0.2.0` 为例；发布其他版本时替换对应版本号：
 
-1. 将 `[Unreleased]` 的本次内容整理为 `## [0.1.5] - YYYY-MM-DD`，填入实际发布日期，顶部继续保留空的 `[Unreleased]`。
+1. 将 `[Unreleased]` 的本次内容整理为 `## [0.2.0] - YYYY-MM-DD`，填入实际发布日期，顶部继续保留空的 `[Unreleased]`。
 2. 更新版本并预览将来展示的 Release 正文：
 
 ```sh
-npm version 0.1.5 --no-git-tag-version
-npm run release:notes -- v0.1.5
+npm version 0.2.0 --no-git-tag-version
+npm run release:notes -- v0.2.0
 npm run check
 npm run package
 ```
@@ -384,8 +384,8 @@ npm run package
 ```sh
 git switch main
 git pull --ff-only origin main
-git tag -a v0.1.5 -m "Release v0.1.5"
-git push origin v0.1.5
+git tag -a v0.2.0 -m "Release v0.2.0"
+git push origin v0.2.0
 ```
 
 标签必须与 `package.json` 的版本一致，且 CHANGELOG 中必须有唯一、带日期、包含更新条目的对应章节。工作流提取该章节到 `tmp/release-notes.md`，通过独立的说明 artifact 传递给发布任务，再用 `gh release create --notes-file` 将标题、分类和条目直接展示在 GitHub Release 正文中。未发布内容和其他版本不会混入正文，验证、测试或打包失败均不会发布。
