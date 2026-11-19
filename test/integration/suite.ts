@@ -117,9 +117,9 @@ export async function run() {
     await until(() => editor.document.getText() === before, 'rapid Backspace undoes both deletions together');
   });
   await test('paired braces unwrap one-argument commands and remove multi-argument commands only at the last pair', async () => {
-    const styled = await openMarked('\\textit{test}|');
+    const styled = await openMarked('\\textsuperscript{test}|');
     await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
-    await until(() => styled.document.getText() === 'test', 'style command is removed');
+    await until(() => styled.document.getText() === 'test', 'unlisted style command is removed');
 
     const fraction = await openMarked('\\frac{numerator}|{denominator}');
     const partial = '\\frac numerator{denominator}';
