@@ -18,7 +18,18 @@ const MATH_CLOSERS = new Set(MATH_PAIRS.values());
 const OPAQUE_ENVIRONMENTS = new Set([...VERBATIM_LIKE_ENVIRONMENTS,
   'BVerbatim', 'LVerbatim', 'SaveVerbatim', 'VerbatimOut', 'filecontents', 'filecontents*']);
 const OPAQUE_ARGUMENT = /%|\\(?:verb|Verb|lstinline|mintinline)\b/;
+const ARGUMENT_SPACE = /[ \t]*(?:\r?\n[ \t]*)?/y;
+const COMMAND_DECLARATION = /^\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand|newenvironment|renewenvironment|(?:New|Renew|Provide|Declare)(?:Expandable)?Document(?:Command|Environment)|[gex]?def|(?:future)?let)\*?$/;
 const COMMAND_ARITIES = new Map<string, number>([
+  ...[
+    'alpha beta gamma delta epsilon varepsilon zeta eta theta vartheta iota kappa varkappa lambda mu nu xi pi varpi rho varrho sigma varsigma tau upsilon phi varphi chi psi omega Gamma Delta Theta Lambda Xi Pi Sigma Upsilon Phi Psi Omega',
+    'sin cos tan cot sec csc arcsin arccos arctan sinh cosh tanh coth log ln lg exp lim limsup liminf max min sup inf det dim gcd hom ker deg arg Pr bmod',
+    'sum prod coprod int iint iiint iiiint oint infty partial nabla ell hbar imath jmath emptyset varnothing cdot times pm mp ldots cdots vdots ddots dots',
+    'TeX LaTeX today textbackslash textasciitilde textasciicircum textbar textless textgreater ae AE oe OE aa AA ss o O l L quad qquad enspace thinspace negthinspace null',
+    'raggedright raggedleft centering normalfont rmfamily sffamily ttfamily upshape itshape slshape scshape mdseries bfseries rm sf tt it sl sc bf em cal',
+    'tiny scriptsize footnotesize small normalsize large Large LARGE huge Huge textstyle displaystyle scriptstyle scriptscriptstyle',
+    'relax par noindent indent hfil hfill vfil vfill newpage clearpage cleardoublepage pagebreak linebreak newline nobreak csname endcsname global long outer protected item hline toprule midrule bottomrule cr crcr omit limits nolimits displaylimits mathstrut strut leavevmode',
+  ].join(' ').split(' ').map(name => [`\\${name}`, 0] as const),
   ...'text textit textbf texttt textrm textsf textsl textsc textup textmd textnormal emph mbox underline overline mathbf mathrm mathit mathsf mathtt mathcal mathbb mathfrak mathnormal boldsymbol operatorname operatorname* sqrt'.split(' ')
     .map(name => [`\\${name}`, 1] as const),
   ...'frac dfrac tfrac binom dbinom tbinom overset underset stackrel textcolor href texorpdfstring'.split(' ')
@@ -56,9 +67,10 @@ interface OpeningBoundary {
 
 type OpeningEdit = TextEdit & { environment?: string; arguments?: CommandArguments };
 
-function skipSpace(text: string, offset: number) {
-  while (/\s/.test(text[offset] || '')) offset++;
-  return offset;
+function skipArgumentSpace(text: string, offset: number) {
+  ARGUMENT_SPACE.lastIndex = offset;
+  ARGUMENT_SPACE.test(text);
+  return ARGUMENT_SPACE.lastIndex;
 }
 
 function commandArguments(text: string, header: CommandHeader): CommandArguments | undefined {
@@ -70,7 +82,7 @@ function commandArguments(text: string, header: CommandHeader): CommandArguments
     const end = findMatchingBrace(text, start, text.length) + 1;
     if (!end || OPAQUE_ARGUMENT.test(text.slice(start, end))) return;
     groups.push({ start, end, text: '' });
-    start = skipSpace(text, end);
+    start = skipArgumentSpace(text, end);
   }
   return { command: header.command, groups };
 }
@@ -86,6 +98,7 @@ export function findLatexBoundaryPair(text: string, offset: number, direction: D
   const definedArities = new Map<string, number>();
   const stack: OpeningBoundary[] = [];
   let nextArgument: CommandHeader | undefined;
+  let declarationOperands = 0;
   let target: OpeningBoundary | undefined;
   const top = () => stack[stack.length - 1];
   const atBoundary = (start: number, end: number) => (direction === 'left' ? end : start) === offset;
@@ -108,6 +121,10 @@ export function findLatexBoundaryPair(text: string, offset: number, direction: D
       tokens.lastIndex = newline + 1;
       continue;
     }
+    const declaration = COMMAND_DECLARATION.test(symbol);
+    const declarationOperand = declarationOperands > 0;
+    declarationOperands = declaration ? (symbol === '\\let' || symbol === '\\futurelet' ? 2 : 1) :
+      Math.max(0, declarationOperands - 1);
     if (INLINE_LATEX_LITERAL_COMMAND.test(symbol)) {
       const literalEnd = findInlineLatexLiteralEnd(text, symbol, end);
       if (literalEnd === undefined) return;
@@ -164,10 +181,15 @@ export function findLatexBoundaryPair(text: string, offset: number, direction: D
         definedArities.set(name, text[commandDefinition.lastIndex] === '{' ? Number(definition[3] || 0) : 0);
       }
     }
-    const arity = definedArities.get(symbol) ?? COMMAND_ARITIES.get(symbol);
-    if (arity) {
-      const nextStart = skipSpace(text, end);
-      nextArgument = text[nextStart] === '{' ? { command: { start, end, text: '' }, groups: [], arity, nextStart } : undefined;
+    if (!declaration && !declarationOperand && !closesWith && !closingKey && end === start + symbol.length &&
+      /^\\[a-zA-Z@]+\*?$/.test(symbol)) {
+      const nextStart = skipArgumentSpace(text, end);
+      if (text[nextStart] === '{') {
+        const name = symbol.endsWith('*') ? symbol.slice(0, -1) : symbol;
+        const arity = definedArities.get(symbol) ?? COMMAND_ARITIES.get(symbol) ??
+          (definedArities.has(name) || COMMAND_ARITIES.has(name) ? 0 : Infinity);
+        if (arity > 0) nextArgument = { command: { start, end, text: '' }, groups: [], arity, nextStart };
+      }
     }
     if (closesWith) {
       const owner = symbol === '{' && nextArgument?.nextStart === start ? nextArgument : undefined;
@@ -187,7 +209,7 @@ export function findLatexBoundaryPair(text: string, offset: number, direction: D
       stack.pop();
       if (opening.owner) {
         opening.owner.groups.push({ start: opening.start, end, text: '' });
-        opening.owner.nextStart = skipSpace(text, end);
+        opening.owner.nextStart = skipArgumentSpace(text, end);
         if (opening.owner.groups.length < opening.owner.arity && text[opening.owner.nextStart] === '{') {
           nextArgument = opening.owner;
         }
@@ -212,7 +234,8 @@ function finishDeletion(text: string, pair: [OpeningEdit, TextEdit] | undefined,
   const groups = command.groups.filter(group => !ownsGroup(group));
   if (!groups.length) return { edits: [...edits, command.command], continued };
 
-  const space = command.command.end === opening.start && /[a-zA-Z@]/.test(text[opening.end] || '');
+  const contentStart = opening.end === closing.start ? closing.end : opening.end;
+  const space = command.command.end === opening.start && /[a-zA-Z@]/.test(text[contentStart] || '');
   if (space) edits = edits.map(edit => edit.start === opening.start ? { ...edit, text: ' ' } : edit);
   const shift = (offset: number) => edits.reduce((next, edit) =>
     edit.end <= offset ? next + edit.text.length - (edit.end - edit.start) : next, offset);

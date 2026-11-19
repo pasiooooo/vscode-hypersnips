@@ -24,6 +24,9 @@ const pairs: [string, 'left' | 'right', string][] = [
   ['(\\left(x\\right))|', 'left', '\\left(x\\right)'],
   ['{|literal ) text} (x)', 'left', 'literal ) text (x)'],
   ['\\textit{test}|', 'left', 'test'],
+  ['\\boxed{x}|', 'left', 'x'],
+  ['\\section*|{Title}', 'right', 'Title'],
+  ['\\emph{prefix \\custom{{nested}}| suffix}', 'left', '\\emph{prefix {nested} suffix}'],
   ['\\emph{|a {b} c}', 'left', 'a {b} c'],
   ['\\textbf|{bold}', 'right', 'bold'],
   ['\\textit{test}{body}|', 'left', '\\textit{test}body'],
@@ -31,11 +34,24 @@ const pairs: [string, 'left' | 'right', string][] = [
   ['\\frac{numerator}{denominator}|', 'left', '\\frac{numerator}denominator'],
   ['\\multicolumn{2}{c}|{cell}', 'left', '\\multicolumn{2}c{cell}'],
   ['\\frac{x}|% keep comment\n{y}', 'left', '\\fracx% keep comment\n{y}'],
+  ['\\custom{one}\n  {two}|', 'left', '\\custom{one}\n  two'],
+  ['\\custom{one}|\n\n{standalone}', 'left', 'one\n\n{standalone}'],
+  ['\\custom{123}|% keep comment\n{456}', 'left', '\\custom123% keep comment\n{456}'],
+  ['\\custom{123}|{unclosed', 'left', '\\custom123{unclosed'],
   ['\\alpha{123}|', 'left', '\\alpha123'],
+  ['\\sin{123}|', 'left', '\\sin123'],
+  ['\\LaTeX{}| guide', 'left', '\\LaTeX guide'],
+  ['\\newcommand{\\custom}{123}|', 'left', '\\newcommand{\\custom}123'],
+  ['\\providecommand\\textit{123}|', 'left', '\\providecommand\\textit123'],
+  ['\\def% keep comment\n\\custom{123}|', 'left', '\\def% keep comment\n\\custom123'],
+  ['\\let\\alias=\\custom{123}|', 'left', '\\let\\alias=\\custom123'],
+  ['\\newcommand{\\custom}{x}\n\\custom{123}|', 'left', '\\newcommand{\\custom}{x}\n\\custom123'],
   ['\\begin{tabular}{cc}{first cell} & second\\end{tabular}|', 'left', '{first cell} & second'],
   ['\\begin{tabularx}{\\linewidth}[t]{>{\\bfseries}lX}\r\na & b\\end{tabularx}|', 'left', '\r\na & b'],
   ['\\begin{alignat}{2}a&=b\\end{alignat}|', 'left', 'a&=b'],
   ['\\begin{equation}{x}\\end{equation}|', 'left', '{x}'],
+  ['\\begin{equation}{x}|\\end{equation}', 'left', '\\begin{equation}x\\end{equation}'],
+  ['\\Bigl({x}|\\Bigr)', 'left', '\\Bigl(x\\Bigr)'],
   ['\\begin{tabular}{uncertain body}\\end{tabular}|', 'left', '{uncertain body}'],
   ['\\begin{aligned}[x]y\\end{aligned}|', 'left', '[x]y'],
   ['\\begin{tabular}{c% label\n c}x\\end{tabular}|', 'left', '{c% label\n c}x'],
@@ -94,20 +110,34 @@ for (const [marked, direction, expected] of pairs) {
   assert.strictEqual(current, expected, marked);
 }
 
-for (const order of ['2314', '4321', '1234']) {
-  const prefix = '\\newcommand{\\testcmd}[4]{#1#2#3#4}\n';
-  let text = prefix + '\\testcmd{one}{two}{three}{four}';
-  let previous: CommandArguments | undefined;
-  for (const [index, digit] of Array.from(order).entries()) {
-    const content = ['one', 'two', 'three', 'four'][Number(digit) - 1];
-    const offset = text.indexOf(`{${content}}`) + content.length + 2;
-    const plan = getPairedDeletePlan(text, offset, offset, 'left', undefined, previous);
-    assert.ok(plan, `${order}: argument ${digit}`);
-    text = applyTextEditsToString(text, plan.edits);
-    previous = plan.remainingCommand;
-    assert.strictEqual(text.slice(prefix.length).startsWith('\\testcmd'), index < order.length - 1);
+for (const prefix of ['', '\\newcommand{\\testcmd}[4]{#1#2#3#4}\n']) {
+  for (const order of ['2314', '4321', '1234']) {
+    let text = prefix + '\\testcmd{one}{two}{three}{four}';
+    let previous: CommandArguments | undefined;
+    for (const [index, digit] of Array.from(order).entries()) {
+      const content = ['one', 'two', 'three', 'four'][Number(digit) - 1];
+      const offset = text.indexOf(`{${content}}`) + content.length + 2;
+      const plan = getPairedDeletePlan(text, offset, offset, 'left', undefined, previous);
+      assert.ok(plan, `${order}: argument ${digit}`);
+      text = applyTextEditsToString(text, plan.edits);
+      previous = plan.remainingCommand;
+      assert.strictEqual(text.slice(prefix.length).startsWith('\\testcmd'), index < order.length - 1);
+    }
+    assert.strictEqual(text, prefix + 'onetwothreefour');
   }
-  assert.strictEqual(text, prefix + 'onetwothreefour');
+}
+
+let withEmptyArgument = '\\custom{}{word}{last}';
+let remainingArguments: CommandArguments | undefined;
+for (const [argument, expected] of [
+  ['{word}', '\\custom{}word{last}'], ['{}', '\\custom word{last}'], ['{last}', 'wordlast'],
+]) {
+  const offset = withEmptyArgument.indexOf(argument) + argument.length;
+  const plan = getPairedDeletePlan(withEmptyArgument, offset, offset, 'left', undefined, remainingArguments);
+  assert.ok(plan, argument);
+  withEmptyArgument = applyTextEditsToString(withEmptyArgument, plan.edits);
+  remainingArguments = plan.remainingCommand;
+  assert.strictEqual(withEmptyArgument, expected);
 }
 
 for (const [marked, direction] of fallbacks) {
