@@ -1,4 +1,4 @@
-import { getLatexContext, isEscaped, LatexContextOptions, LatexEditorContext, LatexEnvironmentFrame,
+import { getLatexContext, isEscaped, LATEX_ENVIRONMENT_TOKEN, LatexContextOptions, LatexEditorContext, LatexEnvironmentFrame,
   LatexMathKind, resolveLatexContextOptions, sanitizeLatexForParsing } from './latexContext';
 import { LatexEnvironmentPair, MathDelimiterPair, SingleTextChange, parseBracedArguments } from './environmentConvert';
 
@@ -36,7 +36,7 @@ function parseBlock(raw: string, command: RegExp, sanitized = sanitizeLatexForPa
   raw = (' ' + raw).slice(1);
   sanitized = sanitized == raw ? raw : (' ' + sanitized).slice(1);
   const block: Block = { raw, sanitized, environments: [], delimiters: [], braces: [] };
-  for (const match of sanitized.matchAll(/\\(begin|end)\s*\{([^}]+)\}/g)) {
+  for (const match of sanitized.matchAll(new RegExp(LATEX_ENVIRONMENT_TOKEN.source, 'g'))) {
     // Cached contexts keep names after their temporary parsing prefix is discarded.
     const name = (' ' + match[2].trim()).slice(1);
     const leading = match[2].search(/\S/);

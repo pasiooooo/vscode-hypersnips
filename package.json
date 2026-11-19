@@ -46,6 +46,7 @@
 		"onCommand:hsnips.wrapMathStructure",
 		"onCommand:hsnips.unwrapMathStructure",
 		"onCommand:hsnips.smartEnter",
+		"onCommand:hsnips.pairedDelete",
 		"onCommand:hsnips.smartTab",
 		"onCommand:hsnips.matrixTab"
 	],
@@ -59,6 +60,12 @@
 						"default": true,
 						"scope": "language-overridable",
 						"description": "Automatically align LaTeX columns, operators, row breaks, and comments after edits. Synchronize trailing empty columns and supported table column specifications while preserving occupied cells and handwritten multiline layout; new columns use l. Disable to keep manually entered spacing and column counts."
+					},
+					"hsnips.pairedDelete.enabled": {
+						"type": "boolean",
+						"default": true,
+						"scope": "resource",
+						"description": "In LaTeX and TeX, Backspace or Delete removes the matching delimiter only after one entire delimiter is deleted, leaving its contents in place."
 					},
 					"hsnips.multiLineContext": {
 						"type": "number",
@@ -189,6 +196,18 @@
 		],
 		"keybindings": [
 			{
+				"key": "backspace",
+				"command": "hsnips.pairedDelete",
+				"args": "left",
+				"when": "editorTextFocus && !editorReadonly && !editorHasMultipleSelections && !inSnippetMode && !suggestWidgetVisible && config.hsnips.pairedDelete.enabled && editorLangId =~ /^(latex|tex)$/"
+			},
+			{
+				"key": "delete",
+				"command": "hsnips.pairedDelete",
+				"args": "right",
+				"when": "editorTextFocus && !editorReadonly && !editorHasMultipleSelections && !inSnippetMode && !suggestWidgetVisible && config.hsnips.pairedDelete.enabled && editorLangId =~ /^(latex|tex)$/"
+			},
+			{
 				"key": "enter",
 				"command": "hsnips.smartEnter",
 				"when": "editorTextFocus && !editorReadonly && !suggestWidgetVisible && hsnips.canSmartEnter"
@@ -243,7 +262,7 @@
 		"compile": "tsc -p ./",
 		"watch": "tsc -watch -p ./",
 		"lint": "tsc --noEmit -p ./",
-		"test": "tsc -p tsconfig.test.json && node tmp/test-out/test/index.js && node tmp/test-out/test/incremental.js && node --expose-gc tmp/test-out/test/incrementalMemory.js && node tmp/test-out/test/alignmentPerformance.js && node tmp/test-out/test/fontScheduling.js && node tmp/test-out/test/snippetPerformance.js && node tmp/test-out/test/snippetManager.js && node tmp/test-out/test/completionPerformance.js && node tmp/test-out/test/sanitizingPerformance.js && node tmp/test-out/test/latexColumns.js && node tmp/test-out/test/liveColumns.js && node tmp/test-out/test/multilineAlignment.js && node tmp/test-out/test/alignmentCorrections.js && node tmp/test-out/test/environmentVariants.js && node tmp/test-out/test/smartTab.js && node tmp/test-out/test/smartEnterColumns.js && node tmp/test-out/test/enterSelection.js && node tmp/test-out/test/alignmentSelection.js && node test/columnRemovalScheduling.cjs && node test/releaseNotes.cjs",
+		"test": "tsc -p tsconfig.test.json && node tmp/test-out/test/index.js && node tmp/test-out/test/incremental.js && node --expose-gc tmp/test-out/test/incrementalMemory.js && node tmp/test-out/test/alignmentPerformance.js && node tmp/test-out/test/fontScheduling.js && node tmp/test-out/test/snippetPerformance.js && node tmp/test-out/test/snippetManager.js && node tmp/test-out/test/completionPerformance.js && node tmp/test-out/test/sanitizingPerformance.js && node tmp/test-out/test/latexColumns.js && node tmp/test-out/test/liveColumns.js && node tmp/test-out/test/multilineAlignment.js && node tmp/test-out/test/alignmentCorrections.js && node tmp/test-out/test/environmentVariants.js && node tmp/test-out/test/pairedDelete.js && node tmp/test-out/test/smartTab.js && node tmp/test-out/test/smartEnterColumns.js && node tmp/test-out/test/enterSelection.js && node tmp/test-out/test/alignmentSelection.js && node test/columnRemovalScheduling.cjs && node test/releaseNotes.cjs",
 		"check": "npm run lint && npm run test",
 		"package": "node -e \"require('fs').mkdirSync('dist', { recursive: true })\" && vsce package --out dist/",
 		"test:integration": "npm run compile && tsc -p tsconfig.test.json && node scripts/run-integration.cjs",

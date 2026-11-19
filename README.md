@@ -276,9 +276,17 @@ Enter 逻辑同时带有文档变更兜底：如果其他扩展或编辑器模�
 
 如果光标在 `\[...\]` 或 `$$...$$` 内，会把 display math delimiter 转为所选环境。如果有选区且不在已有环境内，会用目标环境包裹选区。转换到表格类环境时会保留已有列格式；没有列格式时会提示输入，默认是 `c`，`tabularx` / `tabular*` 默认使用 `\linewidth`。
 
-直接修改 `\begin{...}` 或 `\end{...}` 内的环境名时，扩展会尝试同步另一端名称。若自动同步没有触发，可以运行 `vscode-hypersnips: Rename Matching LaTeX Environment` 手动同步当前环境。
+直接修改 `\begin{...}` 或 `\end{...}` 内的环境名时，只有能确认原来的配对、且修改完全落在名称内，才会同步另一端。先清空名称时对端保持不变；如果接着在同一处写入有效的新名称，会同步对端。若自动同步没有触发，可以运行 `vscode-hypersnips: Rename Matching LaTeX Environment` 手动同步当前环境。
 
 `vscode-hypersnips: Wrap Math Structure` 可以把选区或当前公式 body 包裹成 `aligned`、`cases`、`split`、`matrix`、`pmatrix`、`bmatrix`、`equation`、`align` 等结构。`vscode-hypersnips: Unwrap Math Structure` 会移除当前最外层支持的数学环境或 display math delimiter，并保留内部内容。
+
+## 成对删除
+
+LaTeX / TeX 编辑器默认开启，不用运行命令。用 Backspace 或 Delete 从一端边缘连续逐字删除，**仅当这一端删干净**才移除匹配的另一端；整段选中单个标记再删除也可以。例如把 `\end{tabular}` 删到只剩 `\end`，`\begin{tabular}` 不动；再删完，才清除对应的 `\begin{tabular}` 及能确认的列格式（如 `{cc}`）、宽度和位置参数。正文和换行保留；无法识别的参数不会自动删除。
+
+删除 `\textit{test}` 的一侧大括号会得到 `test`。对于 `\frac{a}{b}`、`\multicolumn{2}{c}{内容}` 等，先拆开的参数内容仍保留，**只在删掉最后剩下的一对参数括号时**才移除命令。本文件中由 `\newcommand` 明确定义参数个数的命令也支持；穿插其他文本编辑后，不会猜测已拆开参数的归属。
+
+支持 `{...}`、`(...)`、`[...]`、`\{...\}`、`\(...\)`、`\[...\]`、`$...$`、`$$...$$` 及 `\begin{名称}...\end{名称}`。光标移开、换方向或插入文字会中断追踪；注释、逐字代码、`\left` / `\right`、错配或跨作用域的边界不成对处理。如果匹配前遇到无法判断的 TeX 条件分支，也回退到普通删除。普通选区、多光标、snippet 占位符和 Markdown 保留原生删除行为。可在设置中搜索 `@id:hsnips.pairedDelete.enabled` 关闭；关闭不影响环境名称同步。
 
 ## Snippet 管理器
 

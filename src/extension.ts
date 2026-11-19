@@ -7,6 +7,7 @@ import { HSnippet } from './hsnippet';
 import { HSnippetInstance } from './hsnippetInstance';
 import { getAutoAlignmentEdits, mapAlignmentOffset } from './latexAlignment';
 import { getAlignmentStructure } from './latexColumns';
+import { CommandArguments, DeleteDirection, getPairedDeletePlan, PairedDeleteProgress } from './latexPairDelete';
 import { getFontCharacterWidths } from './fontMetrics';
 import { parse } from './parser';
 import { getSnippetDir } from './utils';
@@ -31,6 +32,7 @@ import {
     createUnwrapMathStructurePlan,
     createWrapCurrentMathStructurePlan,
     createWrapEnvironmentPlan,
+    EnvironmentNameLink,
     findDisplayMathDelimiterAt,
     findLatexEnvironmentPairAt,
     formatTableArguments,
@@ -58,7 +60,13 @@ let snippetLoadSequence = 0;
 const SNIPPET_STACK: HSnippetInstance[] = [];
 
 let insertingSnippet = false;
-let applyingLatexEdit = false;
+let applyingLatexEdit: boolean | 'pairedDelete' | 'nameSync' = false;
+let pairedDeleteEdit: Promise<boolean> | undefined;
+let pairedDeleteProgress: { editor: vscode.TextEditor; version: number; session: symbol; previousCaret: number;
+    progress: PairedDeleteProgress } | undefined;
+let remainingCommandArguments: { document: vscode.TextDocument; version: number; arguments: CommandArguments } | undefined;
+let pendingEnvironmentName: { document: vscode.TextDocument; version: number; link: EnvironmentNameLink;
+    edits: TextEdit[] } | undefined;
 let aligningLatex = false;
 let alignmentTimer: ReturnType<typeof setTimeout> | undefined;
 let cursorRequest = 0;
@@ -183,8 +191,9 @@ async function typeText(text: string) {
     await vscode.commands.executeCommand('type', { text });
 }
 
-async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[], undoStopBefore = true, undoStopAfter = true) {
-    applyingLatexEdit = true;
+async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[], undoStopBefore = true, undoStopAfter = true,
+    kind: true | 'pairedDelete' | 'nameSync' = true) {
+    applyingLatexEdit = kind;
     try {
         return await editor.edit((editBuilder) => {
             for (let edit of edits) {
@@ -200,6 +209,51 @@ async function applyEdits(editor: vscode.TextEditor, edits: TextEdit[], undoStop
     } finally {
         applyingLatexEdit = false;
     }
+}
+
+async function pairedDelete(direction: DeleteDirection) {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || (direction !== 'left' && direction !== 'right')) return;
+    const document = editor.document;
+    if (pairedDeleteEdit) {
+        const session = pairedDeleteProgress?.session;
+        if (session === undefined) return;
+        do {
+            await pairedDeleteEdit;
+            if (vscode.window.activeTextEditor !== editor || pairedDeleteProgress?.session !== session) return;
+        } while (pairedDeleteEdit);
+        if (pairedDeleteProgress?.editor !== editor || pairedDeleteProgress.version !== document.version) return;
+    }
+    const previous = pairedDeleteProgress;
+    pairedDeleteProgress = undefined;
+    if (['latex', 'tex'].includes(document.languageId) && editor.selections.length === 1 &&
+        !insertingSnippet && !applyingLatexEdit && SNIPPET_STACK[0]?.editor.document !== document &&
+        vscode.workspace.getConfiguration('hsnips', document).get<boolean>('pairedDelete.enabled', true)) {
+        const snapshot = getDocumentState(document);
+        const progress = previous?.editor === editor && previous.version === snapshot.version ? previous.progress : undefined;
+        const saved = remainingCommandArguments;
+        const plan = getPairedDeletePlan(snapshot.text, document.offsetAt(editor.selection.start),
+            document.offsetAt(editor.selection.end), direction, progress,
+            saved?.document === document && saved.version === snapshot.version ? saved.arguments : undefined);
+        if (plan) {
+            if (plan.progress) {
+                pairedDeleteProgress = { editor, version: snapshot.version + 1, progress: plan.progress,
+                    session: plan.continued ? previous!.session : Symbol(), previousCaret: document.offsetAt(editor.selection.active) };
+            }
+            pairedDeleteEdit = applyEdits(editor, plan.edits, !plan.continued, !plan.progress, 'pairedDelete');
+            let applied = false;
+            try {
+                applied = await pairedDeleteEdit;
+                remainingCommandArguments = applied && plan.remainingCommand && document.version === snapshot.version + 1 ?
+                    { document, version: document.version, arguments: plan.remainingCommand } : undefined;
+            } finally {
+                pairedDeleteEdit = undefined;
+                if (!applied) pairedDeleteProgress = undefined;
+            }
+            return;
+        }
+    }
+    await vscode.commands.executeCommand(direction === 'left' ? 'deleteLeft' : 'deleteRight');
 }
 
 function isAutoAlignEnabled(document: vscode.TextDocument) {
@@ -252,7 +306,7 @@ function trackColumnRemovals(event: vscode.TextDocumentChangeEvent, previous?: L
 }
 
 function scheduleAlignment(editor: vscode.TextEditor, event: vscode.TextDocumentChangeEvent, previous?: LatexDocumentState) {
-    if (event.reason || !isLatexLikeDocument(event.document) ||
+    if (applyingLatexEdit === 'pairedDelete' || event.reason || !isLatexLikeDocument(event.document) ||
         !event.contentChanges.length || !isAutoAlignEnabled(event.document)) {
         if (alignmentTimer) clearTimeout(alignmentTimer);
         pendingColumnRemovals.delete(event.document);
@@ -457,45 +511,35 @@ async function recoverEnvironmentNameSyncAfterChange(
     previous: LatexDocumentState | undefined,
     current: LatexDocumentState
 ) {
-    if (applyingLatexEdit || !previous || !isLatexLikeDocument(editor.document)) {
+    if ((applyingLatexEdit && applyingLatexEdit !== 'nameSync') || !previous || !isLatexLikeDocument(editor.document)) {
         return false;
     }
 
-    let plan = createEnvironmentNameSyncPlan(
+    const pending = pendingEnvironmentName;
+    pendingEnvironmentName = undefined;
+    const plan = createEnvironmentNameSyncPlan(
         previous.text,
         current.text,
-        {
-            rangeOffset: change.rangeOffset,
-            rangeLength: change.rangeLength,
-            text: change.text,
-        },
+        change,
         getLatexContextOptions(),
-        previous
+        previous,
+        pending?.document === editor.document && pending.version === previous.version ? pending.link : undefined
     );
 
-    if (!plan.handled) {
-        return false;
+    if (editor.document.version !== current.version || vscode.window.activeTextEditor !== editor) return false;
+    if (plan.pendingNameLink) {
+        pendingEnvironmentName = { document: editor.document, version: current.version, link: plan.pendingNameLink, edits: plan.edits };
     }
+    if (!plan.handled || applyingLatexEdit) return plan.handled;
 
-    applyingLatexEdit = true;
-    try {
-        return await editor.edit(
-            (editBuilder) => {
-                for (let edit of plan.edits) {
-                    editBuilder.replace(
-                        new vscode.Range(
-                            editor.document.positionAt(edit.start),
-                            editor.document.positionAt(edit.end)
-                        ),
-                        edit.text
-                    );
-                }
-            },
-            { undoStopBefore: false, undoStopAfter: false }
-        );
-    } finally {
-        applyingLatexEdit = false;
+    let next = pendingEnvironmentName;
+    while (next?.edits.length && next.document === editor.document && next.version === editor.document.version &&
+        vscode.window.activeTextEditor === editor) {
+        await applyEdits(editor, next.edits, false, false, 'nameSync');
+        if (next === pendingEnvironmentName) break;
+        next = pendingEnvironmentName;
     }
+    return true;
 }
 
 async function nextSnippetPlaceholder() {
@@ -971,6 +1015,8 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    context.subscriptions.push(vscode.commands.registerCommand('hsnips.pairedDelete', pairedDelete));
+
     context.subscriptions.push(
         vscode.commands.registerTextEditorCommand('hsnips.matrixTab', (editor) => {
             return smartTab(editor);
@@ -1068,6 +1114,7 @@ export function activate(context: vscode.ExtensionContext) {
 
                 if (
                     activeEditor &&
+                    !e.reason &&
                     e.document == activeEditor.document &&
                     e.contentChanges.length == 1 && states &&
                     await recoverEnvironmentNameSyncAfterChange(
@@ -1118,6 +1165,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.workspace.onDidCloseTextDocument((document) => {
         documentStates.delete(document);
         pendingColumnRemovals.delete(document);
+        if (remainingCommandArguments?.document === document) remainingCommandArguments = undefined;
     }));
 
     // Remove any stale snippet instances.
@@ -1130,6 +1178,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor((editor) => {
+            pairedDeleteProgress = undefined;
+            pendingEnvironmentName = undefined;
             if (editor) {
                 if (isLatexLikeDocument(editor.document)) getDocumentState(editor.document);
             }
@@ -1139,7 +1189,20 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.window.onDidChangeTextEditorSelection((e) => {
-            if (e.kind) cursorRequest++;
+            if (e.kind) {
+                cursorRequest++;
+                const pending = pairedDeleteProgress;
+                if (pending?.editor === e.textEditor) {
+                    const { boundary, direction } = pending.progress;
+                    const version = e.textEditor.document.version;
+                    const expected = version === pending.version ? (direction === 'left' ? boundary.end : boundary.start) :
+                        version === pending.version - 1 ? pending.previousCaret : undefined;
+                    if (e.selections.length !== 1 || !e.selections[0].isEmpty ||
+                        e.textEditor.document.offsetAt(e.selections[0].active) !== expected) {
+                        pairedDeleteProgress = undefined;
+                    }
+                }
+            }
             while (SNIPPET_STACK.length) {
                 if (e.selections.some((s) => SNIPPET_STACK[0].range.contains(s))) {
                     break;
@@ -1152,6 +1215,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration('hsnips.pairedDelete')) {
+                pairedDeleteProgress = undefined;
+                remainingCommandArguments = undefined;
+            }
             if (event.affectsConfiguration('hsnips.autoAlign')) {
                 if (alignmentTimer) clearTimeout(alignmentTimer);
                 alignmentTimer = undefined;

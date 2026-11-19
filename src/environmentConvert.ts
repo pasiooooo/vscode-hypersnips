@@ -1,11 +1,13 @@
 import type { LatexDocumentSnapshot } from './latexDocumentState';
 import {
   isEscaped,
+  LATEX_ENVIRONMENT_TOKEN,
   LatexContextOptions,
   sanitizeLatexForParsing,
   VERBATIM_LIKE_ENVIRONMENTS,
 } from './latexContext';
 import { TextEdit } from './latexEdit';
+import { findLatexBoundaryPair } from './latexPairDelete';
 
 export const CONVERTIBLE_ENVIRONMENTS = [
   'align',
@@ -176,7 +178,7 @@ export function findLatexEnvironmentPairAt(
   let verbatimEnvironments = new Set(VERBATIM_LIKE_ENVIRONMENTS);
   let stack: BeginToken[] = [];
   let pairs: LatexEnvironmentPair[] = [];
-  const environmentReg = /\\(begin|end)\s*\{([^}]+)\}/g;
+  const environmentReg = new RegExp(LATEX_ENVIRONMENT_TOKEN.source, 'g');
   let match: RegExpExecArray | null;
 
   while ((match = environmentReg.exec(sanitized)) !== null) {
@@ -589,48 +591,13 @@ export function createEnvironmentConversionPlan(
   return { handled: false, edits: [] };
 }
 
-function isChangeInRange(change: SingleTextChange, start: number, end: number) {
-  let changeStart = change.rangeOffset;
-  let changeEnd = change.rangeOffset + change.rangeLength;
-  if (change.rangeLength == 0) {
-    return start <= changeStart && changeStart <= end;
-  }
-  return changeStart < end && changeEnd > start;
-}
-
-function mapOffsetAfterChange(offset: number, change: SingleTextChange) {
-  let changeStart = change.rangeOffset;
-  let changeEnd = change.rangeOffset + change.rangeLength;
-  let delta = change.text.length - change.rangeLength;
-  if (offset <= changeStart) {
-    return offset;
-  }
-  if (offset >= changeEnd) {
-    return offset + delta;
-  }
-  return changeStart + change.text.length;
-}
-
-function mapRangeAfterChange(start: number, end: number, change: SingleTextChange) {
-  if (change.rangeLength == 0) {
-    let delta = change.text.length;
-    if (change.rangeOffset < start) {
-      return { start: start + delta, end: end + delta };
-    }
-    if (change.rangeOffset <= end) {
-      return { start, end: end + delta };
-    }
-    return { start, end };
-  }
-
-  return {
-    start: mapOffsetAfterChange(start, change),
-    end: mapOffsetAfterChange(end, change),
-  };
-}
-
 export function isValidEnvironmentName(name: string) {
   return /^[^{}\s]+$/.test(name);
+}
+
+export interface EnvironmentNameLink {
+  source: { start: number; end: number };
+  partner: { start: number; end: number };
 }
 
 export function createEnvironmentNameSyncPlan(
@@ -638,40 +605,34 @@ export function createEnvironmentNameSyncPlan(
   afterText: string,
   change: SingleTextChange,
   options: LatexContextOptions = {},
-  snapshot?: LatexDocumentSnapshot
-): ConversionPlan {
-  if (snapshot && !snapshot.touchesEnvironmentName(change)) return { handled: false, edits: [] };
-  let pairsToCheck = [
-    findLatexEnvironmentPairAt(beforeText, change.rangeOffset, options, snapshot),
-    findLatexEnvironmentPairAt(beforeText, change.rangeOffset + change.rangeLength, options, snapshot),
-  ].filter((pair): pair is LatexEnvironmentPair => Boolean(pair));
-
-  for (let pair of pairsToCheck) {
-    let editedBegin = isChangeInRange(change, pair.beginNameStart, pair.beginNameEnd);
-    let editedEnd = isChangeInRange(change, pair.endNameStart, pair.endNameEnd);
-    if (editedBegin == editedEnd) {
-      continue;
-    }
-
-    let editedStart = editedBegin ? pair.beginNameStart : pair.endNameStart;
-    let editedEndOffset = editedBegin ? pair.beginNameEnd : pair.endNameEnd;
-    let targetStart = editedBegin ? pair.endNameStart : pair.beginNameStart;
-    let targetEnd = editedBegin ? pair.endNameEnd : pair.beginNameEnd;
-    let mappedEdited = mapRangeAfterChange(editedStart, editedEndOffset, change);
-    let mappedTarget = mapRangeAfterChange(targetStart, targetEnd, change);
-    let nextName = afterText.slice(mappedEdited.start, mappedEdited.end);
-    let currentTargetName = afterText.slice(mappedTarget.start, mappedTarget.end);
-
-    if (!isValidEnvironmentName(nextName) || nextName == currentTargetName) {
-      return { handled: false, edits: [] };
-    }
-
-    return {
-      handled: true,
-      edits: [{ start: mappedTarget.start, end: mappedTarget.end, text: nextName }],
-      cursorOffset: mappedTarget.start,
-    };
+  snapshot?: LatexDocumentSnapshot,
+  link?: EnvironmentNameLink
+): ConversionPlan & { pendingNameLink?: EnvironmentNameLink } {
+  const unhandled = { handled: false, edits: [] };
+  const inside = (range: EnvironmentNameLink['source']) => change.rangeOffset >= range.start &&
+    change.rangeOffset + change.rangeLength <= range.end;
+  if (!link || !inside(link.source)) {
+    if (snapshot && !snapshot.touchesEnvironmentName(change)) return unhandled;
+    const pair = findLatexEnvironmentPairAt(beforeText, change.rangeOffset, options, snapshot);
+    if (!pair) return unhandled;
+    const begin = { start: pair.beginNameStart, end: pair.beginNameEnd };
+    const end = { start: pair.endNameStart, end: pair.endNameEnd };
+    if (inside(begin)) link = { source: begin, partner: end };
+    else if (inside(end)) link = { source: end, partner: begin };
+    else return unhandled;
+    const strictPair = findLatexBoundaryPair(beforeText, pair.beginStart, 'right');
+    if (strictPair?.[0].end !== pair.beginEnd || strictPair[1].start !== pair.endStart ||
+      strictPair[1].end !== pair.endEnd) return unhandled;
   }
 
-  return { handled: false, edits: [] };
+  const delta = change.text.length - change.rangeLength;
+  const source = { start: link.source.start, end: link.source.end + delta };
+  const shift = link.partner.start > source.start ? delta : 0;
+  const partner = { start: link.partner.start + shift, end: link.partner.end + shift };
+  const nextName = afterText.slice(source.start, source.end);
+  if (!nextName) return { ...unhandled, pendingNameLink: { source, partner } };
+  if (!isValidEnvironmentName(nextName) || /[\\%]/.test(nextName) ||
+    nextName === afterText.slice(partner.start, partner.end)) return unhandled;
+  return { handled: true, edits: [{ ...partner, text: nextName }], cursorOffset: partner.start,
+    pendingNameLink: { source, partner } };
 }

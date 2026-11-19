@@ -7,7 +7,7 @@ const MAX_COLUMNS = 1024;
 const MAX_SPEC_DEPTH = 16;
 const TABLES = new Set(['array', 'tabular', 'tabular*', 'tabularx', 'longtable']);
 
-interface Group { value: string; end: number }
+interface Group { value: string; start: number; end: number }
 interface Row {
   start: number; end: number; dataStart?: number; bodyEnd: number; columns: number;
   occupiedColumns: number; separators: { start: number; column: number }[];
@@ -31,7 +31,7 @@ function groupAt(text: string, start: number, open = '{', close = '}'): Group | 
       index = group.end - 1;
     } else if (text[index] === open) depth++;
     else if (text[index] === close && --depth === 0) {
-      return { value: text.slice(start + 1, index), end: index + 1 };
+      return { value: text.slice(start + 1, index), start, end: index + 1 };
     }
   }
   return undefined;
@@ -95,30 +95,34 @@ function specColumns(spec: string, depth = 0, keepColumns?: number): {
   return columns ? { columns, appendOffset, columnEnds, prefix, trailing: trailingInside + spec.slice(appendOffset), trailingInside } : undefined;
 }
 
-function optionalPosition(text: string, index: number): number | undefined {
+function optionalPosition(text: string, index: number, groups?: Group[]): number | undefined {
   index = skipSpace(text, index);
   if (text[index] !== '[') return index;
-  return groupAt(text, index, '[', ']')?.end;
+  const group = groupAt(text, index, '[', ']');
+  if (group) groups?.push(group);
+  return group?.end;
 }
 
-function declaration(text: string, name: string): {
+export function getAlignmentDeclaration(text: string, name: string): {
   start: number; columns?: number; appendOffset?: number; columnEnds?: number[]; specificationStart?: number; trailingInside?: string;
+  groups: Group[];
 } | undefined {
+  const groups: Group[] = [];
   const counted = /^(?:alignedat\*?|x?alignat\*?|xxalignat)$/.test(name);
   if (!TABLES.has(name) && !counted) {
-    const optional = /^[pbBvV]?(?:small)?matrix\*$/.test(name);
-    const alignedOption = name === 'aligned' && text[skipSpace(text, 0)] === '[';
-    const start = alignedOption ? optionalPosition(text, 0) :
-      optional && text[0] === '[' ? groupAt(text, 0, '[', ']')?.end : 0;
+    const optional = name === 'aligned' && text[skipSpace(text, 0)] === '[' ||
+      /^[pbBvV]?(?:small)?matrix\*$/.test(name) && text[0] === '[';
+    const start = optional ? optionalPosition(text, 0, groups) : 0;
     if (start === undefined) return undefined;
-    return { start, columns: /^(?:d?r?cases\*?|split)$/.test(name) ? 2 : /^eqnarray\*?$/.test(name) ? 3 : undefined };
+    return { start, groups, columns: /^(?:d?r?cases\*?|split)$/.test(name) ? 2 : /^eqnarray\*?$/.test(name) ? 3 : undefined };
   }
-  let index = TABLES.has(name) || /^alignedat\*?$/.test(name) ? optionalPosition(text, 0) : 0;
+  let index = TABLES.has(name) || /^alignedat\*?$/.test(name) ? optionalPosition(text, 0, groups) : 0;
   if (index === undefined) return undefined;
   if (name === 'tabular*' || name === 'tabularx') {
     const width = groupAt(text, index);
     if (!width) return undefined;
-    index = optionalPosition(text, width.end);
+    groups.push(width);
+    index = optionalPosition(text, width.end, groups);
     if (index === undefined) return undefined;
   }
   const argument = groupAt(text, index);
@@ -127,7 +131,8 @@ function declaration(text: string, name: string): {
   const columns = TABLES.has(name) ? specification?.columns : positiveInteger(argument.value);
   const count = columns && (TABLES.has(name) ? columns : columns * 2);
   if (!count || count > MAX_COLUMNS) return undefined;
-  return { start: argument.end, columns: count,
+  groups.push(argument);
+  return { start: argument.end, columns: count, groups,
     specificationStart: specification ? argument.end - 1 - argument.value.length : undefined,
     trailingInside: specification?.trailingInside,
     columnEnds: specification?.columnEnds.map((end) => argument.end - 1 - argument.value.length + end),
@@ -325,7 +330,7 @@ export function getAlignmentStructure(
   const pair = snapshot?.environmentPairAt(frame.beginEnd);
   const end = pair?.beginStart === frame.beginStart ? pair.endEnd : text.length;
   const source = sanitizeLatexForParsing(text.slice(frame.beginEnd, end));
-  const declared = declaration(source, frame.name);
+  const declared = getAlignmentDeclaration(source, frame.name);
   if (!declared) return undefined;
   return { ...scanRows(source, declared.start, frame.name), source, declared, base: frame.beginEnd,
     declarationText: text.slice(frame.beginEnd, frame.beginEnd + declared.start) };

@@ -66,7 +66,7 @@ for (const fixture of fixtures) {
     state = old.update([change]);
     check(state);
     assert.deepStrictEqual(convert.createEnvironmentNameSyncPlan(old.text, state.text, change, old.options, old),
-      baselineConvert.createEnvironmentNameSyncPlan(old.text, state.text, change, old.options));
+      convert.createEnvironmentNameSyncPlan(old.text, state.text, change, old.options));
     assert.deepStrictEqual(old.contextAt(Math.floor(old.text.length / 2)), before);
   }
 }

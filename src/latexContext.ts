@@ -145,6 +145,9 @@ export const VERBATIM_LIKE_ENVIRONMENTS = [
   'comment',
 ];
 
+export const LATEX_ENVIRONMENT_TOKEN = /\\(begin|end)\s*\{([^}]+)\}/;
+export const INLINE_LATEX_LITERAL_COMMAND = /^\\(?:verb\*?|Verb\*?|lstinline\*?|mintinline)$/;
+
 export type LatexMathKind =
   | 'none'
   | 'inlineDollar'
@@ -369,7 +372,7 @@ function getOpenLatexEnvironmentFramesFromSanitized(
 ) {
   let verbatimEnvironments = new Set(resolved.verbatimLikeEnvironments);
   const stack: LatexEnvironmentFrame[] = [];
-  const environmentReg = /\\(begin|end)\s*\{([^}]+)\}/g;
+  const environmentReg = new RegExp(LATEX_ENVIRONMENT_TOKEN.source, 'g');
   let match: RegExpExecArray | null;
 
   while ((match = environmentReg.exec(beforeCursor)) !== null) {
@@ -483,6 +486,20 @@ export function findMatchingBrace(text: string, openBrace: number, limit: number
   }
 
   return -1;
+}
+
+export function findInlineLatexLiteralEnd(text: string, command: string, offset: number) {
+  const verb = /^\\verb\*?$/.test(command);
+  // shortcut: nested literal options fall back to native editing; extend only if their syntax is needed.
+  const header = verb ? '' : (command === '\\mintinline' ?
+    /^(?:\[[^\[\]{}\r\n]*\])?\{[^{}\r\n]*\}/ : /^(?:\[[^\[\]{}\r\n]*\])?/).exec(text.slice(offset))?.[0];
+  if (header === undefined) return undefined;
+  const start = offset + header.length;
+  const delimiter = text[start];
+  if (!delimiter || /\s/.test(delimiter) || (!verb && '[]}'.includes(delimiter))) return undefined;
+  const end = delimiter === '{' && !verb ?
+    findMatchingBrace(text, start, text.length) : text.indexOf(delimiter, start + 1);
+  return end < 0 || /[\r\n]/.test(text.slice(start, end)) ? undefined : end + 1;
 }
 
 export function isInsideTextLikeCommand(
