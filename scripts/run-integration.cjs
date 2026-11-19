@@ -15,7 +15,7 @@ async function main() {
     'hsnips.autoAlign.enabled': false, 'editor.autoClosingBrackets': 'never',
     'editor.autoClosingQuotes': 'never', 'editor.formatOnType': false,
     'editor.wordBasedSuggestions': 'off', 'files.autoSave': 'off',
-    'workbench.startupEditor': 'none', 'security.workspace.trust.enabled': false,
+    'workbench.startupEditor': 'none', 'chat.disableAIFeatures': true, 'security.workspace.trust.enabled': false,
     'update.mode': 'none', 'telemetry.telemetryLevel': 'off',
   }));
   writeFileSync(path.join(snippets, 'latex.hsnips'), [

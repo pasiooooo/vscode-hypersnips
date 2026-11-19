@@ -78,6 +78,123 @@ export async function run() {
     await until(() => editor.document.getText().includes('\\end{align*}'), 'matching environment name');
     assert.strictEqual(editor.document.getText(), '\\begin{align*}\n  a &= b\n\\end{align*}');
   });
+  await test('name replacement after an empty name keeps the original nested partner', async () => {
+    const editor = await openMarked('\\begin{quote}outer\\begin{quote}inner\\end{|quote}tail\\end{quote}');
+    const start = editor.selection.active;
+    editor.selection = new vscode.Selection(start, start.translate(0, 5));
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
+    await until(() => editor.document.getText() === '\\begin{quote}outer\\begin{quote}inner\\end{}tail\\end{quote}', 'empty name only changes the edited end');
+    await Promise.all(Array.from('array', text => vscode.commands.executeCommand('type', { text })));
+    await until(() => editor.document.getText() === '\\begin{quote}outer\\begin{array}inner\\end{array}tail\\end{quote}', 'only the inner name is mirrored');
+  });
+  await test('paired backspace keeps the other end until the last character, with one undo and redo', async () => {
+    const marker = '\\end{tabular}';
+    const declaration = '\\begin{tabular}[t]{cc}';
+    const body = '\n  {(x)} & y \\\\\n'.repeat(64);
+    const head = 'pre' + declaration + body;
+    const editor = await openMarked(head + marker + '| post');
+    const before = editor.document.getText();
+    const after = before.replace(declaration, '').replace(marker, '');
+    for (let length = marker.length - 1; length >= 0; length--) {
+      await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
+      const expected = length ? head + marker.slice(0, length) + ' post' : after;
+      await until(() => editor.document.getText() === expected, `remove one character (${length} remaining)`);
+    }
+    await until(() => editor.selection.active.isEqual(editor.document.positionAt(3 + body.length)), 'caret stays at deleted end marker');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'undo restores both markers');
+    await vscode.commands.executeCommand('redo');
+    await until(() => editor.document.getText() === after, 'redo removes both markers');
+  });
+  await test('overlapping Backspaces finish the same delimiter without touching its body', async () => {
+    const marker = '\\end{itemize}';
+    const body = '\n  \\item text\n';
+    const before = '\\begin{itemize}' + body + marker;
+    const editor = await openMarked(before + '|');
+    await Promise.all(Array.from(marker, () => vscode.commands.executeCommand('hsnips.pairedDelete', 'left')));
+    await until(() => editor.document.getText() === body, 'rapid Backspace removes both delimiters');
+    await vscode.commands.executeCommand('undo');
+    await until(() => editor.document.getText() === before, 'rapid Backspace undoes both deletions together');
+  });
+  await test('paired braces unwrap one-argument commands and remove multi-argument commands only at the last pair', async () => {
+    const styled = await openMarked('\\textit{test}|');
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
+    await until(() => styled.document.getText() === 'test', 'style command is removed');
+
+    const fraction = await openMarked('\\frac{numerator}|{denominator}');
+    const partial = '\\frac numerator{denominator}';
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
+    await until(() => fraction.document.getText() === partial, 'fraction command stays intact');
+    await vscode.commands.executeCommand('cursorEnd');
+    await until(() => fraction.document.offsetAt(fraction.selection.active) === partial.length, 'cursor is at last argument');
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
+    await until(() => fraction.document.getText() === 'numeratordenominator', 'last pair removes the command');
+    await vscode.commands.executeCommand('undo');
+    await until(() => fraction.document.getText() === partial, 'undo restores the command and last argument together');
+  });
+  await test('forward paired delete is canceled after an intervening edit', async () => {
+    const editor = await openMarked('|\\[x\\]');
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'right');
+    await until(() => editor.document.getText() === '[x\\]', 'first key removes only the slash');
+    const position = editor.document.positionAt(2);
+    await editor.edit(builder => builder.insert(position, '+y'));
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'right');
+    await until(() => editor.document.getText() === 'x+y\\]', 'an edit invalidates the stored pair');
+  });
+  await test('moving away cancels partial delimiter deletion even after moving back', async () => {
+    const editor = await openMarked('\\[\nx\n\\]|');
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
+    await until(() => editor.document.getText() === '\\[\nx\n\\', 'only the closing bracket is deleted');
+    await vscode.commands.executeCommand('cursorUp');
+    await until(() => editor.selection.active.line === 1, 'move out of the marker');
+    await vscode.commands.executeCommand('cursorDown');
+    await until(() => editor.selection.active.isEqual(new vscode.Position(2, 1)), 'return to the marker');
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
+    await until(() => editor.document.getText() === '\\[\nx\n', 'the other delimiter is still present');
+  });
+  await test('selecting one whole delimiter removes only its matching delimiter', async () => {
+    const editor = await openMarked('\\[|x\\]');
+    editor.selection = new vscode.Selection(editor.document.positionAt(0), editor.selection.active);
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'right');
+    await until(() => editor.document.getText() === 'x', 'exact marker selection deletes both sides');
+  });
+  await test('forward paired delete preserves alignment layout', async () => {
+    const editor = await openMarked('\\begin{align}\n  x&= |(a) \\\\\n  longer&=b \\\\\n\\end{align}');
+    const expected = editor.document.getText().replace('(a)', 'a');
+    await configure(true);
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'right');
+    await until(() => editor.document.getText() === expected, 'remove matching parentheses');
+    await delay(250);
+    assert.strictEqual(editor.document.getText(), expected);
+  });
+  await test('paired delete falls back for selections, multiple carets, and partial names', async () => {
+    const selection = await openMarked('(a|b)');
+    selection.selection = new vscode.Selection(selection.selection.active, selection.selection.active.translate(0, 2));
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
+    await until(() => selection.document.getText() === '(a', 'selection deletion is native');
+
+    const multiple = await openMarked('(|a) (b)');
+    const other = multiple.document.positionAt(5);
+    multiple.selections = [multiple.selection, new vscode.Selection(other, other)];
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
+    await until(() => multiple.document.getText() === 'a) b)', 'multi-caret deletion is native');
+
+    const name = await openMarked('\\begin{align*|}x\\end{align*}');
+    await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
+    await until(() => name.document.getText() === '\\begin{align}x\\end{align}', 'name deletion still synchronizes');
+  });
+  await test('paired delete is default-on and can be disabled per workspace', async () => {
+    const editor = await openMarked('(|x)');
+    const config = vscode.workspace.getConfiguration('hsnips', editor.document);
+    assert.strictEqual(config.inspect<boolean>('pairedDelete.enabled')?.defaultValue, true);
+    await config.update('pairedDelete.enabled', false, vscode.ConfigurationTarget.Workspace);
+    try {
+      await vscode.commands.executeCommand('hsnips.pairedDelete', 'left');
+      await until(() => editor.document.getText() === 'x)', 'disabled uses native Backspace');
+    } finally {
+      await config.update('pairedDelete.enabled', undefined, vscode.ConfigurationTarget.Workspace);
+    }
+  });
   await test('editing a completed row synchronizes other rows and the declaration without Enter', async () => {
     const editor = await openMarked('\\begin{tabular}{lc}\n  a & b| \\\\\n  c & d \\\\\n\\end{tabular}');
     const before = editor.document.getText();

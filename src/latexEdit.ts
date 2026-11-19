@@ -1,9 +1,10 @@
 import type { LatexDocumentSnapshot } from './latexDocumentState';
 import { getAlignmentColumnCompletion, getAlignmentStructure } from './latexColumns';
 import {
+  findInlineLatexLiteralEnd,
   findLatexCommentStart,
-  findMatchingBrace,
   getLatexContext,
+  INLINE_LATEX_LITERAL_COMMAND,
   LatexContextOptions,
   resolveLatexContextOptions,
   sanitizeLatexForParsing,
@@ -276,20 +277,10 @@ export function getSmartTabPlan(
       if (!nested) break;
       nested--;
     }
-    else if (/^\\(?:verb\*?|Verb\*?|lstinline\*?|mintinline)$/.test(symbol)) {
-      const verb = /^\\verb\*?$/.test(symbol);
-      // shortcut: nested literal options fall back to normal Tab; extend only if their syntax is needed.
-      const header = verb ? '' : (symbol === '\\mintinline' ?
-        /^(?:\[[^\[\]{}\r\n]*\])?\{[^{}\r\n]*\}/ : /^(?:\[[^\[\]{}\r\n]*\])?/).exec(text.slice(tokens.lastIndex))?.[0];
-      if (header === undefined) return undefined;
-      const start = tokens.lastIndex + header.length;
-      const delimiter = text[start];
-      if (!delimiter || /\s/.test(delimiter) || (!verb && '[]}'.includes(delimiter))) return undefined;
-      const end = delimiter === '{' && !verb ?
-        findMatchingBrace(text, start, text.length) : text.indexOf(delimiter, start + 1);
-      if (end < 0 || /[\r\n]/.test(text.slice(start, end))) return undefined;
-      if (offset > token.index && offset <= end) return undefined;
-      tokens.lastIndex = end + 1;
+    else if (INLINE_LATEX_LITERAL_COMMAND.test(symbol)) {
+      const end = findInlineLatexLiteralEnd(text, symbol, tokens.lastIndex);
+      if (end === undefined || (offset > token.index && offset < end)) return undefined;
+      tokens.lastIndex = end;
     } else if (symbol === '{') braces++;
     else if (symbol === '}') braces--;
     else if (symbol === '[') brackets++;
