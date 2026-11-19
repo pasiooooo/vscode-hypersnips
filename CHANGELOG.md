@@ -6,6 +6,8 @@ GitHub Release 正文直接展示对应版本的完整内容；本文件也随 V
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-19
+
 ### Added
 
 - LaTeX / TeX 默认启用成对删除。使用 Backspace 或 Delete 删完整个边界后才清理对端，保留跨行正文；可通过 `hsnips.pairedDelete.enabled` 关闭。
